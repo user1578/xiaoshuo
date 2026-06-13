@@ -100,6 +100,11 @@ type NavItem = {
   count: number
 }
 
+type PendingDuplicate = {
+  match: Novel
+  payload: NovelPayload
+}
+
 const mockNovels: Novel[] = [
   {
     id: 1,
@@ -729,6 +734,35 @@ function countBy<K extends keyof Novel>(novels: Novel[], key: K, value: Novel[K]
   return novels.filter((novel) => novel[key] === value).length
 }
 
+function normalizeComparableText(value: string, { stripBookMarks = false } = {}) {
+  const halfWidthText = Array.from(value.trim(), (character) => {
+    const codePoint = character.charCodeAt(0)
+    if (codePoint === 0x3000) return ' '
+    if (codePoint >= 0xff01 && codePoint <= 0xff5e) return String.fromCharCode(codePoint - 0xfee0)
+    return character
+  }).join('')
+
+  const text = stripBookMarks ? halfWidthText.replace(/[《》]/g, '') : halfWidthText
+
+  return text.replace(/[\s\u00a0]+/g, '').toLowerCase()
+}
+
+function findDuplicateNovel(novels: Novel[], payload: NovelPayload, currentNovelId?: number) {
+  const targetTitle = normalizeComparableText(payload.title, { stripBookMarks: true })
+  const targetAuthor = normalizeComparableText(payload.author)
+
+  if (!targetTitle || !targetAuthor) return undefined
+
+  return novels.find((novel) => {
+    if (novel.id === currentNovelId) return false
+
+    return (
+      normalizeComparableText(novel.title, { stripBookMarks: true }) === targetTitle &&
+      normalizeComparableText(novel.author) === targetAuthor
+    )
+  })
+}
+
 function App() {
   const [novels, setNovels] = useState<Novel[]>(mockNovels)
   const [loading, setLoading] = useState(true)
@@ -1025,6 +1059,7 @@ function App() {
                 allTags={allTags}
                 fallbackNovel={novels[0] ?? mockNovels[0]}
                 mode="new"
+                novels={novels}
                 onCreateNovel={handleCreateNovel}
                 setActiveView={setActiveView}
               />
@@ -1035,6 +1070,7 @@ function App() {
                 fallbackNovel={novels[0] ?? mockNovels[0]}
                 mode="edit"
                 novel={editingNovel ?? novels[0] ?? mockNovels[0]}
+                novels={novels}
                 setActiveView={setActiveView}
                 onUpdateNovel={handleUpdateNovel}
               />
@@ -2191,6 +2227,7 @@ function NovelFormView({
   fallbackNovel,
   mode,
   novel,
+  novels,
   onCreateNovel,
   onUpdateNovel,
   setActiveView,
@@ -2199,6 +2236,7 @@ function NovelFormView({
   fallbackNovel: Novel
   mode: 'new' | 'edit'
   novel?: Novel
+  novels: Novel[]
   onCreateNovel?: (payload: NovelPayload) => Promise<void>
   onUpdateNovel?: (id: number, payload: NovelPayload) => Promise<void>
   setActiveView: (view: View) => void
@@ -2231,6 +2269,7 @@ function NovelFormView({
   const [tagInput, setTagInput] = useState('')
   const [saving, setSaving] = useState(false)
   const [submitError, setSubmitError] = useState<string | null>(null)
+  const [pendingDuplicate, setPendingDuplicate] = useState<PendingDuplicate | null>(null)
 
   const previewNovel: Novel = {
     ...baseNovel,
@@ -2250,6 +2289,16 @@ function NovelFormView({
     setCharacters([...characters, { name: `主角${characters.length + 1}`, attribute: '其他' }])
   }
 
+  const updateTitle = (value: string) => {
+    setTitle(value)
+    setPendingDuplicate(null)
+  }
+
+  const updateAuthor = (value: string) => {
+    setAuthor(value)
+    setPendingDuplicate(null)
+  }
+
   const removeCharacter = (index: number) => {
     setCharacters(characters.filter((_, itemIndex) => itemIndex !== index))
   }
@@ -2265,20 +2314,14 @@ function NovelFormView({
     setTagInput('')
   }
 
-  const handleSubmit = async () => {
-    if (mode === 'new' && !onCreateNovel) return
-    if (mode === 'edit' && (!novel || !onUpdateNovel)) return
-
-    setSaving(true)
-    setSubmitError(null)
-
+  const buildPayload = (): NovelPayload => {
     const today = new Date().toISOString().slice(0, 10)
-    const payload: NovelPayload = {
+    return {
       author: previewNovel.author,
       characters: previewNovel.characters,
       cover: previewNovel.cover,
       cpCategory: previewNovel.cpCategory,
-      createdAt: previewNovel.createdAt,
+      createdAt: mode === 'new' ? today : previewNovel.createdAt,
       ending: normalizeEndingForForm(previewNovel.ending),
       favorite: previewNovel.favorite,
       notes: previewNovel.notes,
@@ -2289,10 +2332,15 @@ function NovelFormView({
       title: previewNovel.title,
       updatedAt: today,
     }
+  }
+
+  const persistNovel = async (payload: NovelPayload) => {
+    setSaving(true)
+    setSubmitError(null)
 
     try {
       if (mode === 'new' && onCreateNovel) {
-        await onCreateNovel({ ...payload, createdAt: today })
+        await onCreateNovel(payload)
       }
 
       if (mode === 'edit' && novel && onUpdateNovel) {
@@ -2303,6 +2351,32 @@ function NovelFormView({
     } finally {
       setSaving(false)
     }
+  }
+
+  const handleSubmit = async () => {
+    if (mode === 'new' && !onCreateNovel) return
+    if (mode === 'edit' && (!novel || !onUpdateNovel)) return
+
+    const payload = buildPayload()
+    const duplicate = findDuplicateNovel(novels, payload, mode === 'edit' ? novel?.id : undefined)
+
+    setSubmitError(null)
+
+    if (duplicate) {
+      setPendingDuplicate({ match: duplicate, payload })
+      return
+    }
+
+    setPendingDuplicate(null)
+    await persistNovel(payload)
+  }
+
+  const continueDuplicateSave = async () => {
+    if (!pendingDuplicate) return
+
+    const { payload } = pendingDuplicate
+    setPendingDuplicate(null)
+    await persistNovel(payload)
   }
 
   const formSteps = [
@@ -2380,10 +2454,26 @@ function NovelFormView({
         </div>
 
         {submitError && <p role="alert">{submitError}</p>}
+        {pendingDuplicate && (
+          <div className="form-section" role="alert">
+            <h3>重复提示</h3>
+            <p>
+              可能已存在相同记录：{pendingDuplicate.match.title} by {pendingDuplicate.match.author}
+            </p>
+            <div className="form-actions">
+              <button className="save-action" disabled={saving} onClick={continueDuplicateSave} type="button">
+                继续保存
+              </button>
+              <button disabled={saving} onClick={() => setPendingDuplicate(null)} type="button">
+                返回修改
+              </button>
+            </div>
+          </div>
+        )}
 
         <FormSection title="基础信息">
-          <Field label="书名" onChange={setTitle} value={previewNovel.title} />
-          <Field label="作者" onChange={setAuthor} value={previewNovel.author} />
+          <Field label="书名" onChange={updateTitle} value={previewNovel.title} />
+          <Field label="作者" onChange={updateAuthor} value={previewNovel.author} />
           <SelectField label="CP类别" onChange={(value) => setCpCategory(value as CpCategory)} options={['1v1', '无CP', 'NP']} value={previewNovel.cpCategory} />
           <SelectField label="结局" onChange={(value) => setEnding(value as Novel['ending'])} options={['HE', 'BE', 'OE', '坑', '其他']} value={previewNovel.ending} />
         </FormSection>
