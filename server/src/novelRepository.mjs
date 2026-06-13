@@ -36,6 +36,13 @@ function normalizeCharacterAttribute(value) {
   return '其他'
 }
 
+function assertEnumValue(value, allowedValues, fieldName) {
+  if (!allowedValues.has(value)) {
+    throw Object.assign(new Error(`${fieldName} is invalid`), { statusCode: 400 })
+  }
+  return value
+}
+
 function assertString(value, fieldName) {
   if (typeof value !== 'string' || value.trim() === '') {
     throw Object.assign(new Error(`${fieldName} is required`), { statusCode: 400 })
@@ -112,6 +119,104 @@ function replaceTags(db, novelId, tags) {
   })
 }
 
+function clearNovelTables(db) {
+  db.prepare('DELETE FROM novel_tags').run()
+  db.prepare('DELETE FROM characters').run()
+  db.prepare('DELETE FROM novels').run()
+  db.prepare('DELETE FROM tags').run()
+  db.prepare('DELETE FROM authors').run()
+}
+
+function insertNovelRecord(db, novel) {
+  const createdAt = novel.createdAt ?? new Date().toISOString().slice(0, 10)
+  const updatedAt = novel.updatedAt ?? createdAt
+  const authorId = getOrCreateAuthorId(db, novel.author)
+  const result = db
+    .prepare(
+      `INSERT INTO novels (
+        title, author_id, cp_category, ending, status, rating, read_count,
+        notes, cover, favorite, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    )
+    .run(
+      novel.title,
+      authorId,
+      novel.cpCategory ?? '1v1',
+      novel.ending ?? '其他',
+      novel.status ?? '看完',
+      novel.rating ?? '未评价',
+      novel.readCount ?? 0,
+      novel.notes ?? '',
+      novel.cover ?? DEFAULT_COVER,
+      novel.favorite ?? 0,
+      createdAt,
+      updatedAt,
+    )
+
+  const novelId = Number(result.lastInsertRowid)
+  replaceCharacters(db, novelId, novel.characters ?? [])
+  replaceTags(db, novelId, novel.tags ?? [])
+  return novelId
+}
+
+function validateImportCharacter(character, novelIndex, characterIndex) {
+  if (!character || typeof character !== 'object') {
+    throw Object.assign(new Error(`novels[${novelIndex}].characters[${characterIndex}] is invalid`), { statusCode: 400 })
+  }
+
+  return {
+    name: assertString(character.name, `novels[${novelIndex}].characters[${characterIndex}].name`),
+    attribute: assertEnumValue(
+      character.attribute,
+      CHARACTER_ATTRIBUTES,
+      `novels[${novelIndex}].characters[${characterIndex}].attribute`,
+    ),
+  }
+}
+
+function validateImportNovel(novel, index) {
+  if (!novel || typeof novel !== 'object') {
+    throw Object.assign(new Error(`novels[${index}] is invalid`), { statusCode: 400 })
+  }
+  if (!Array.isArray(novel.characters)) {
+    throw Object.assign(new Error(`novels[${index}].characters must be an array`), { statusCode: 400 })
+  }
+
+  const readCount = Number(novel.readCount)
+  if (!Number.isInteger(readCount) || readCount < 0) {
+    throw Object.assign(new Error(`novels[${index}].readCount is invalid`), { statusCode: 400 })
+  }
+
+  return {
+    title: assertString(novel.title, `novels[${index}].title`),
+    author: assertString(novel.author, `novels[${index}].author`),
+    characters: novel.characters.map((character, characterIndex) =>
+      validateImportCharacter(character, index, characterIndex),
+    ),
+    cpCategory: assertEnumValue(novel.cpCategory, CP_CATEGORIES, `novels[${index}].cpCategory`),
+    ending: assertEnumValue(novel.ending, ENDINGS, `novels[${index}].ending`),
+    status: assertEnumValue(novel.status, STATUSES, `novels[${index}].status`),
+    rating: assertEnumValue(novel.rating, RATINGS, `novels[${index}].rating`),
+    readCount,
+    tags: Array.isArray(novel.tags)
+      ? [...new Set(novel.tags.filter((tag) => typeof tag === 'string').map((tag) => tag.trim()).filter(Boolean))]
+      : [],
+    notes: novel.notes === undefined ? '' : String(novel.notes),
+    cover: novel.cover === undefined ? DEFAULT_COVER : String(novel.cover || DEFAULT_COVER),
+    favorite: toBooleanInteger(novel.favorite),
+    createdAt: novel.createdAt === undefined ? new Date().toISOString().slice(0, 10) : String(novel.createdAt),
+    updatedAt: novel.updatedAt === undefined ? new Date().toISOString().slice(0, 10) : String(novel.updatedAt),
+  }
+}
+
+function validateImportPayload(input) {
+  if (!input || typeof input !== 'object' || !Array.isArray(input.novels)) {
+    throw Object.assign(new Error('Backup JSON must contain a novels array'), { statusCode: 400 })
+  }
+
+  return input.novels.map((novel, index) => validateImportNovel(novel, index))
+}
+
 function rowToNovel(db, row) {
   if (!row) return null
 
@@ -171,36 +276,9 @@ export function getNovelById(db, id) {
 
 export function createNovel(db, input) {
   const novel = normalizeNovelInput(input)
-  const createdAt = novel.createdAt ?? new Date().toISOString().slice(0, 10)
-  const updatedAt = novel.updatedAt ?? createdAt
 
   return runInTransaction(db, () => {
-    const authorId = getOrCreateAuthorId(db, novel.author)
-    const result = db
-      .prepare(
-        `INSERT INTO novels (
-          title, author_id, cp_category, ending, status, rating, read_count,
-          notes, cover, favorite, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      )
-      .run(
-        novel.title,
-        authorId,
-        novel.cpCategory ?? '1v1',
-        novel.ending ?? '其他',
-        novel.status ?? '看完',
-        novel.rating ?? '未评价',
-        novel.readCount ?? 0,
-        novel.notes ?? '',
-        novel.cover ?? DEFAULT_COVER,
-        novel.favorite ?? 0,
-        createdAt,
-        updatedAt,
-      )
-
-    const novelId = Number(result.lastInsertRowid)
-    replaceCharacters(db, novelId, novel.characters ?? [])
-    replaceTags(db, novelId, novel.tags ?? [])
+    const novelId = insertNovelRecord(db, novel)
     return getNovelById(db, novelId)
   })
 }
@@ -268,10 +346,21 @@ export function deleteNovel(db, id) {
 
 export function clearAllNovels(db) {
   runInTransaction(db, () => {
-    db.prepare('DELETE FROM novel_tags').run()
-    db.prepare('DELETE FROM characters').run()
-    db.prepare('DELETE FROM novels').run()
-    db.prepare('DELETE FROM tags').run()
-    db.prepare('DELETE FROM authors').run()
+    clearNovelTables(db)
+  })
+}
+
+export function importNovelBackup(db, input) {
+  const novels = validateImportPayload(input)
+
+  return runInTransaction(db, () => {
+    clearNovelTables(db)
+    novels.forEach((novel) => insertNovelRecord(db, novel))
+
+    return {
+      importedAt: new Date().toISOString(),
+      count: novels.length,
+      novels: listNovels(db),
+    }
   })
 }

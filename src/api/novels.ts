@@ -1,5 +1,6 @@
 const NOVELS_API_URL = 'http://127.0.0.1:3001/api/novels'
 const BACKUP_EXPORT_API_URL = 'http://127.0.0.1:3001/api/backup/export'
+const BACKUP_IMPORT_API_URL = 'http://127.0.0.1:3001/api/backup/import'
 
 export async function fetchNovels<TNovel = unknown>(): Promise<TNovel[]> {
   const response = await fetch(NOVELS_API_URL)
@@ -58,6 +59,23 @@ export async function exportNovelBackup<TBackup = unknown>(): Promise<TBackup> {
 
   if (!response.ok) {
     throw new Error(`Failed to export novel backup: ${response.status}`)
+  }
+
+  return response.json() as Promise<TBackup>
+}
+
+export async function importNovelBackup<TBackup = unknown>(payload: unknown): Promise<TBackup> {
+  const response = await fetch(BACKUP_IMPORT_API_URL, {
+    body: JSON.stringify(payload),
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    method: 'POST',
+  })
+
+  if (!response.ok) {
+    const data = (await response.json().catch(() => null)) as { error?: string } | null
+    throw new Error(data?.error ?? `Failed to import novel backup: ${response.status}`)
   }
 
   return response.json() as Promise<TBackup>

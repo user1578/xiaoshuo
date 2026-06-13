@@ -25,7 +25,7 @@ import {
   UserRound,
   X,
 } from 'lucide-react'
-import { createNovel, deleteNovel, exportNovelBackup, fetchNovels, updateNovel } from './api/novels'
+import { createNovel, deleteNovel, exportNovelBackup, fetchNovels, importNovelBackup, updateNovel } from './api/novels'
 import './App.css'
 
 type View =
@@ -86,6 +86,12 @@ type NovelPayload = Omit<Novel, 'id'>
 
 type NovelBackup = {
   exportedAt: string
+  count: number
+  novels: Novel[]
+}
+
+type NovelImportResult = {
+  importedAt: string
   count: number
   novels: Novel[]
 }
@@ -784,6 +790,13 @@ function App() {
   const [editingNovel, setEditingNovel] = useState<Novel | null>(mockNovels[0])
   const [aboutOpen, setAboutOpen] = useState(false)
 
+  const reloadNovels = async () => {
+    const apiNovels = await fetchNovels<Novel>()
+    setNovels(apiNovels)
+    setError(null)
+    return apiNovels
+  }
+
   useEffect(() => {
     let ignore = false
 
@@ -1026,7 +1039,7 @@ function App() {
 
             {activeView === 'authors' && <AuthorsView authors={authors} setSelectedNovel={setSelectedNovel} />}
             {activeView === 'stats' && <StatsView authors={authors} novels={novels} stats={stats} />}
-            {activeView === 'backup' && <BackupView novels={novels} />}
+            {activeView === 'backup' && <BackupView novels={novels} onReloadNovels={reloadNovels} />}
             {activeView === 'new' && (
               <NovelFormView
                 allTags={allTags}
@@ -2072,9 +2085,13 @@ function StatsSecondaryPanel({
   )
 }
 
-function BackupView({ novels }: { novels: Novel[] }) {
+function BackupView({ novels, onReloadNovels }: { novels: Novel[]; onReloadNovels: () => Promise<Novel[]> }) {
   const [exporting, setExporting] = useState(false)
   const [exportError, setExportError] = useState<string | null>(null)
+  const [importing, setImporting] = useState(false)
+  const [importError, setImportError] = useState<string | null>(null)
+  const [importMessage, setImportMessage] = useState<string | null>(null)
+  const [selectedBackupFile, setSelectedBackupFile] = useState<File | null>(null)
   const backupStats = [
     { label: '最近备份时间', value: '2026-06-10 23:18' },
     { label: '当前小说数量', value: `${novels.length} 本` },
@@ -2108,6 +2125,38 @@ function BackupView({ novels }: { novels: Novel[] }) {
       setExportError(error instanceof Error ? error.message : '导出失败，请确认后端服务已启动')
     } finally {
       setExporting(false)
+    }
+  }
+
+  const handleImportJson = async () => {
+    if (!selectedBackupFile) {
+      setImportError('请先选择 JSON 文件')
+      return
+    }
+
+    const confirmed = window.confirm('导入会覆盖当前数据库中的小说数据，建议先导出当前数据备份。确定继续吗？')
+    if (!confirmed) return
+
+    setImporting(true)
+    setImportError(null)
+    setImportMessage(null)
+
+    try {
+      const rawBackup = await selectedBackupFile.text()
+      const backup = JSON.parse(rawBackup) as unknown
+      const result = await importNovelBackup<NovelImportResult>(backup)
+
+      await onReloadNovels()
+      setImportMessage(`导入成功，共恢复 ${result.count} 本小说`)
+      setSelectedBackupFile(null)
+    } catch (error) {
+      if (error instanceof SyntaxError) {
+        setImportError('JSON 文件格式错误')
+      } else {
+        setImportError(error instanceof Error ? error.message : '导入失败，请确认 JSON 结构正确且后端服务已启动')
+      }
+    } finally {
+      setImporting(false)
     }
   }
 
@@ -2145,7 +2194,7 @@ function BackupView({ novels }: { novels: Novel[] }) {
 
       <div className="backup-grid backup-action-grid">
         <article className="backup-card export-card">
-          <h3>导出方式</h3>
+          <h3>JSON 备份</h3>
           <p>导出当前 SQLite 中的完整小说 JSON 数据，适合手动留存和迁移前备份。</p>
           <div className="backup-buttons">
             <button disabled={exporting} onClick={handleExportJson} type="button">
@@ -2156,8 +2205,32 @@ function BackupView({ novels }: { novels: Novel[] }) {
           <ul>
             <li>文件名格式为 novel-backup-日期.json。</li>
             <li>JSON 包含小说基础信息、主角、标签、评价、阅读次数和时间记录。</li>
-            <li>本阶段只提供导出，不提供导入。</li>
+            <li>导入会覆盖当前数据库，请先导出当前数据备份。</li>
           </ul>
+        </article>
+
+        <article className="backup-card import-card">
+          <h3>导入 JSON</h3>
+          <p>选择此前导出的 novel-backup-日期.json，将其中的小说数据恢复到 SQLite。</p>
+          <label className="tag-input">
+            <input
+              accept="application/json,.json"
+              onChange={(event) => {
+                setSelectedBackupFile(event.target.files?.[0] ?? null)
+                setImportError(null)
+                setImportMessage(null)
+              }}
+              type="file"
+            />
+          </label>
+          <div className="backup-buttons">
+            <button disabled={importing || !selectedBackupFile} onClick={handleImportJson} type="button">
+              {importing ? '导入中' : '导入 JSON'}
+            </button>
+          </div>
+          {selectedBackupFile && <p>已选择：{selectedBackupFile.name}</p>}
+          {importMessage && <p role="status">{importMessage}</p>}
+          {importError && <p role="alert">{importError}</p>}
         </article>
       </div>
 
@@ -2177,12 +2250,12 @@ function BackupView({ novels }: { novels: Novel[] }) {
 
         <article className="backup-card safety-card">
           <h3>安全提示</h3>
-          <p>导出的 JSON 文件请保存在本机稳定目录中。后续如果增加导入能力，会单独加入检查和确认流程。</p>
+          <p>导入前会检查 JSON 结构和枚举字段；如果校验或写入失败，会保留原数据库数据。</p>
           <div className="safety-tags">
             <span>手动留存</span>
             <span>本地文件</span>
             <span>JSON</span>
-            <span>只导出</span>
+            <span>事务恢复</span>
           </div>
         </article>
       </div>

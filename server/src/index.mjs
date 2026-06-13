@@ -1,6 +1,6 @@
 import http from 'node:http'
 import { openDatabase } from './db.mjs'
-import { createNovel, deleteNovel, getNovelById, listNovels, updateNovel } from './novelRepository.mjs'
+import { createNovel, deleteNovel, getNovelById, importNovelBackup, listNovels, updateNovel } from './novelRepository.mjs'
 
 const HOST = process.env.HOST ?? '127.0.0.1'
 const PORT = Number.parseInt(process.env.PORT ?? '3001', 10)
@@ -73,6 +73,11 @@ const server = http.createServer(async (req, res) => {
         count: novels.length,
         novels,
       })
+      return
+    }
+
+    if (req.method === 'POST' && url.pathname === '/api/backup/import') {
+      sendJson(res, 200, importNovelBackup(db, await readJsonBody(req)))
       return
     }
 
