@@ -26,6 +26,7 @@ import {
   UserRound,
   X,
 } from 'lucide-react'
+import { fetchNovels } from './api/novels'
 import './App.css'
 
 type View =
@@ -69,7 +70,7 @@ type Novel = {
   author: string
   characters: Character[]
   cpCategory: CpCategory
-  ending: 'HE' | 'BE' | 'OE' | '未完结' | '未知'
+  ending: 'HE' | 'BE' | 'OE' | '未完结' | '未知' | '坑' | '其他'
   status: ReadStatus
   rating: Rating
   readCount: number
@@ -97,7 +98,7 @@ type NavItem = {
   count: number
 }
 
-const novels: Novel[] = [
+const mockNovels: Novel[] = [
   {
     id: 1,
     title: '月色失格',
@@ -696,7 +697,7 @@ const emptyFilters: FilterState = {
   tag: '全部',
 }
 
-function getNavGroups(): { title: string; items: NavItem[] }[] {
+function getNavGroups(novels: Novel[]): { title: string; items: NavItem[] }[] {
   return [
     {
       title: '书库',
@@ -705,8 +706,8 @@ function getNavGroups(): { title: string; items: NavItem[] }[] {
         { id: 'all', label: '全部小说', icon: LibraryBig, count: novels.length },
         { id: 'recent', label: '最近添加', icon: Clock3, count: 6 },
         { id: 'authors', label: '作者归档', icon: UserRound, count: new Set(novels.map((novel) => novel.author)).size },
-        { id: 'finished', label: '看完', icon: BookOpen, count: countBy('status', '看完') },
-        { id: 'abandoned', label: '荒废', icon: Trash2, count: countBy('status', '荒废') },
+        { id: 'finished', label: '看完', icon: BookOpen, count: countBy(novels, 'status', '看完') },
+        { id: 'abandoned', label: '荒废', icon: Trash2, count: countBy(novels, 'status', '荒废') },
         { id: 'stats', label: '统计', icon: BarChart3, count: 7 },
         { id: 'backup', label: '备份', icon: Archive, count: 2 },
       ],
@@ -714,19 +715,22 @@ function getNavGroups(): { title: string; items: NavItem[] }[] {
     {
       title: 'CP类别',
       items: [
-        { id: 'cp-1v1', label: '1v1', icon: Star, count: countBy('cpCategory', '1v1') },
-        { id: 'cp-none', label: '无CP', icon: Star, count: countBy('cpCategory', '无CP') },
-        { id: 'cp-np', label: 'NP', icon: Sparkles, count: countBy('cpCategory', 'NP') },
+        { id: 'cp-1v1', label: '1v1', icon: Star, count: countBy(novels, 'cpCategory', '1v1') },
+        { id: 'cp-none', label: '无CP', icon: Star, count: countBy(novels, 'cpCategory', '无CP') },
+        { id: 'cp-np', label: 'NP', icon: Sparkles, count: countBy(novels, 'cpCategory', 'NP') },
       ],
     },
   ]
 }
 
-function countBy<K extends keyof Novel>(key: K, value: Novel[K]) {
+function countBy<K extends keyof Novel>(novels: Novel[], key: K, value: Novel[K]) {
   return novels.filter((novel) => novel[key] === value).length
 }
 
 function App() {
+  const [novels, setNovels] = useState<Novel[]>(mockNovels)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
   const [activeView, setActiveView] = useState<View>('home')
   const [query, setQuery] = useState('')
   const [filters, setFilters] = useState<FilterState>(emptyFilters)
@@ -734,8 +738,31 @@ function App() {
   const [selectedNovel, setSelectedNovel] = useState<Novel | null>(null)
   const [carouselIndex, setCarouselIndex] = useState(0)
   const [wallPage, setWallPage] = useState(0)
-  const [editingNovel, setEditingNovel] = useState<Novel | null>(novels[0])
+  const [editingNovel, setEditingNovel] = useState<Novel | null>(mockNovels[0])
   const [aboutOpen, setAboutOpen] = useState(false)
+
+  useEffect(() => {
+    let ignore = false
+
+    fetchNovels<Novel>()
+      .then((apiNovels) => {
+        if (ignore) return
+        setNovels(apiNovels)
+        setError(null)
+      })
+      .catch((fetchError: unknown) => {
+        if (ignore) return
+        setNovels(mockNovels)
+        setError(fetchError instanceof Error ? fetchError.message : '无法读取后端小说数据')
+      })
+      .finally(() => {
+        if (!ignore) setLoading(false)
+      })
+
+    return () => {
+      ignore = true
+    }
+  }, [])
 
   useEffect(() => {
     if (!selectedNovel) return
@@ -765,9 +792,9 @@ function App() {
 
   const stats = {
     total: novels.length,
-    liked: countBy('rating', '喜欢'),
+    liked: countBy(novels, 'rating', '喜欢'),
     authors: new Set(novels.map((novel) => novel.author)).size,
-    abandoned: countBy('status', '荒废'),
+    abandoned: countBy(novels, 'status', '荒废'),
   }
 
   const allTags = Array.from(new Set(novels.flatMap((novel) => novel.tags)))
@@ -802,7 +829,7 @@ function App() {
 
       return matchesKeyword && matchesStatus && matchesRating && matchesAttribute && matchesCp && matchesEnding && matchesTag
     })
-  }, [filters, query])
+  }, [filters, novels, query])
 
   const visibleNovels = useMemo(() => {
     const viewFilters: Partial<Record<View, (novel: Novel) => boolean>> = {
@@ -862,7 +889,7 @@ function App() {
       </header>
 
       <div className="layout-grid">
-        <Sidebar activeView={activeView} setActiveView={setActiveView} />
+        <Sidebar activeView={activeView} novels={novels} setActiveView={setActiveView} />
 
         <section className="workspace">
           <Toolbar
@@ -874,6 +901,15 @@ function App() {
             setQuery={setQuery}
             stats={stats}
           />
+
+          {(loading || error) && (
+            <div className="section-head" role="status">
+              <div>
+                <Clock3 size={18} />
+                <h2>{loading ? '正在读取小说数据' : '后端数据读取失败，正在显示本地临时数据'}</h2>
+              </div>
+            </div>
+          )}
 
           {filterOpen && (
             <FilterPanel
@@ -916,13 +952,16 @@ function App() {
 
             {activeView === 'authors' && <AuthorsView authors={authors} setSelectedNovel={setSelectedNovel} />}
             {activeView === 'stats' && <StatsView authors={authors} novels={novels} stats={stats} />}
-            {activeView === 'backup' && <BackupView />}
-            {activeView === 'new' && <NovelFormView allTags={allTags} mode="new" setActiveView={setActiveView} />}
+            {activeView === 'backup' && <BackupView novels={novels} />}
+            {activeView === 'new' && (
+              <NovelFormView allTags={allTags} fallbackNovel={novels[0] ?? mockNovels[0]} mode="new" setActiveView={setActiveView} />
+            )}
             {activeView === 'edit' && (
               <NovelFormView
                 allTags={allTags}
+                fallbackNovel={novels[0] ?? mockNovels[0]}
                 mode="edit"
-                novel={editingNovel ?? novels[0]}
+                novel={editingNovel ?? novels[0] ?? mockNovels[0]}
                 setActiveView={setActiveView}
               />
             )}
@@ -962,14 +1001,16 @@ function App() {
 
 function Sidebar({
   activeView,
+  novels,
   setActiveView,
 }: {
   activeView: View
+  novels: Novel[]
   setActiveView: (view: View) => void
 }) {
   return (
     <aside className="sidebar">
-      {getNavGroups().map((group) => (
+      {getNavGroups(novels).map((group) => (
         <section className="nav-group" key={group.title}>
           <h2>{group.title}</h2>
           {group.items.map((item) => {
@@ -1185,7 +1226,7 @@ function FilterPanel({
       <FilterGroup active={filters.rating} label="个人评价" onPick={(value) => setFilter('rating', value)} options={['全部', '喜欢', '一般', '不喜欢', '未评价']} />
       <FilterGroup active={filters.characterAttribute} label="主角属性" onPick={(value) => setFilter('characterAttribute', value)} options={['全部', '1', '0', '0.5', '其他']} />
       <FilterGroup active={filters.cpCategory} label="CP类别" onPick={(value) => setFilter('cpCategory', value)} options={['全部', '1v1', '无CP', 'NP']} />
-      <FilterGroup active={filters.ending} label="结局" onPick={(value) => setFilter('ending', value)} options={['全部', 'HE', 'BE', 'OE', '未完结', '未知']} />
+      <FilterGroup active={filters.ending} label="结局" onPick={(value) => setFilter('ending', value)} options={['全部', 'HE', 'BE', 'OE', '坑', '其他']} />
       <FilterGroup active={filters.tag} label="标签" onPick={(value) => setFilter('tag', value)} options={['全部', ...tags.slice(0, 12)]} />
       <button className="reset-filter" onClick={() => setFilters(emptyFilters)} type="button">
         重置筛选
@@ -1934,7 +1975,7 @@ function StatsSecondaryPanel({
   )
 }
 
-function BackupView() {
+function BackupView({ novels }: { novels: Novel[] }) {
   const backupStats = [
     { label: '最近备份时间', value: '2026-06-10 23:18' },
     { label: '当前小说数量', value: `${novels.length} 本` },
@@ -2038,17 +2079,19 @@ function BackupView() {
 
 function NovelFormView({
   allTags,
+  fallbackNovel,
   mode,
   novel,
   setActiveView,
 }: {
   allTags: string[]
+  fallbackNovel: Novel
   mode: 'new' | 'edit'
   novel?: Novel
   setActiveView: (view: View) => void
 }) {
   const baseNovel = novel ?? {
-    ...novels[0],
+    ...fallbackNovel,
     id: 99,
     title: '新收藏的故事',
     author: '待填写作者',
