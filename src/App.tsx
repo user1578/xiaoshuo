@@ -26,7 +26,7 @@ import {
   UserRound,
   X,
 } from 'lucide-react'
-import { fetchNovels } from './api/novels'
+import { createNovel, fetchNovels } from './api/novels'
 import './App.css'
 
 type View =
@@ -81,6 +81,8 @@ type Novel = {
   cover: CoverStyle
   favorite: boolean
 }
+
+type NovelPayload = Omit<Novel, 'id'>
 
 type FilterState = {
   status: '全部' | ReadStatus
@@ -871,6 +873,16 @@ function App() {
     setActiveView('edit')
   }
 
+  const handleCreateNovel = async (payload: NovelPayload) => {
+    const createdNovel = await createNovel<Novel>(payload)
+    const apiNovels = await fetchNovels<Novel>()
+
+    setNovels(apiNovels)
+    setError(null)
+    setSelectedNovel(apiNovels.find((novel) => novel.id === createdNovel.id) ?? createdNovel)
+    setActiveView('all')
+  }
+
   return (
     <main className="novel-app">
       <DecorativeLines />
@@ -954,7 +966,13 @@ function App() {
             {activeView === 'stats' && <StatsView authors={authors} novels={novels} stats={stats} />}
             {activeView === 'backup' && <BackupView novels={novels} />}
             {activeView === 'new' && (
-              <NovelFormView allTags={allTags} fallbackNovel={novels[0] ?? mockNovels[0]} mode="new" setActiveView={setActiveView} />
+              <NovelFormView
+                allTags={allTags}
+                fallbackNovel={novels[0] ?? mockNovels[0]}
+                mode="new"
+                onCreateNovel={handleCreateNovel}
+                setActiveView={setActiveView}
+              />
             )}
             {activeView === 'edit' && (
               <NovelFormView
@@ -2082,12 +2100,14 @@ function NovelFormView({
   fallbackNovel,
   mode,
   novel,
+  onCreateNovel,
   setActiveView,
 }: {
   allTags: string[]
   fallbackNovel: Novel
   mode: 'new' | 'edit'
   novel?: Novel
+  onCreateNovel?: (payload: NovelPayload) => Promise<void>
   setActiveView: (view: View) => void
 }) {
   const baseNovel = novel ?? {
@@ -2101,17 +2121,36 @@ function NovelFormView({
     tags: ['新标签', '待整理'],
     notes: '这里会实时预览备注和标签。',
     cpCategory: '1v1' as CpCategory,
+    ending: '其他' as Novel['ending'],
     cover: 'book' as CoverStyle,
     favorite: false,
   }
+  const [title, setTitle] = useState(baseNovel.title)
+  const [author, setAuthor] = useState(baseNovel.author)
   const [characters, setCharacters] = useState<Character[]>(baseNovel.characters)
+  const [cpCategory, setCpCategory] = useState<CpCategory>(baseNovel.cpCategory)
+  const [ending, setEnding] = useState<Novel['ending']>(normalizeEndingForForm(baseNovel.ending))
+  const [status, setStatus] = useState<ReadStatus>(baseNovel.status)
+  const [rating, setRating] = useState<Rating>(baseNovel.rating)
+  const [readCountInput, setReadCountInput] = useState(String(baseNovel.readCount))
   const [selectedTags, setSelectedTags] = useState<string[]>(baseNovel.tags)
+  const [notes, setNotes] = useState(baseNovel.notes)
   const [tagInput, setTagInput] = useState('')
+  const [saving, setSaving] = useState(false)
+  const [submitError, setSubmitError] = useState<string | null>(null)
 
   const previewNovel: Novel = {
     ...baseNovel,
+    title,
+    author,
     characters,
+    cpCategory,
+    ending,
+    status,
+    rating,
+    readCount: Math.max(0, Number.parseInt(readCountInput, 10) || 0),
     tags: selectedTags,
+    notes,
   }
 
   const addCharacter = () => {
@@ -2122,12 +2161,49 @@ function NovelFormView({
     setCharacters(characters.filter((_, itemIndex) => itemIndex !== index))
   }
 
+  const updateCharacter = (index: number, nextCharacter: Character) => {
+    setCharacters(characters.map((character, itemIndex) => (itemIndex === index ? nextCharacter : character)))
+  }
+
   const addTag = (tag: string) => {
     const cleanTag = tag.trim()
     if (cleanTag.length === 0 || selectedTags.includes(cleanTag)) return
     setSelectedTags([...selectedTags, cleanTag])
     setTagInput('')
   }
+
+  const handleSubmit = async () => {
+    if (mode !== 'new' || !onCreateNovel) return
+
+    setSaving(true)
+    setSubmitError(null)
+
+    const today = new Date().toISOString().slice(0, 10)
+
+    try {
+      await onCreateNovel({
+        author: previewNovel.author,
+        characters: previewNovel.characters,
+        cover: previewNovel.cover,
+        cpCategory: previewNovel.cpCategory,
+        createdAt: today,
+        ending: normalizeEndingForForm(previewNovel.ending),
+        favorite: previewNovel.favorite,
+        notes: previewNovel.notes,
+        rating: previewNovel.rating,
+        readCount: previewNovel.readCount,
+        status: previewNovel.status,
+        tags: previewNovel.tags,
+        title: previewNovel.title,
+        updatedAt: today,
+      })
+    } catch (error) {
+      setSubmitError(error instanceof Error ? error.message : '保存失败，请确认后端服务已启动')
+    } finally {
+      setSaving(false)
+    }
+  }
+
   const formSteps = [
     { done: Boolean(previewNovel.title && previewNovel.author), label: '基础信息', text: '书名、作者、CP 和结局' },
     { done: characters.length > 0, label: '主角信息', text: '姓名和单独属性' },
@@ -2202,19 +2278,30 @@ function NovelFormView({
           <span>{mode === 'new' ? '静态表单原型' : previewNovel.title}</span>
         </div>
 
+        {submitError && <p role="alert">{submitError}</p>}
+
         <FormSection title="基础信息">
-          <Field label="书名" value={previewNovel.title} />
-          <Field label="作者" value={previewNovel.author} />
-          <SelectField label="CP类别" options={['1v1', '无CP', 'NP']} value={previewNovel.cpCategory} />
-          <SelectField label="结局" options={['HE', 'BE', 'OE', '未完结', '未知']} value={previewNovel.ending} />
+          <Field label="书名" onChange={setTitle} value={previewNovel.title} />
+          <Field label="作者" onChange={setAuthor} value={previewNovel.author} />
+          <SelectField label="CP类别" onChange={(value) => setCpCategory(value as CpCategory)} options={['1v1', '无CP', 'NP']} value={previewNovel.cpCategory} />
+          <SelectField label="结局" onChange={(value) => setEnding(value as Novel['ending'])} options={['HE', 'BE', 'OE', '坑', '其他']} value={previewNovel.ending} />
         </FormSection>
 
         <FormSection title="主角">
           <div className="character-editor">
             {characters.map((character, index) => (
               <div className="character-row" key={`${character.name}-${index}`}>
-                <Field label="主角" value={character.name} />
-                <SelectField label="主角属性" options={['1', '0', '0.5', '其他']} value={character.attribute} />
+                <Field
+                  label="主角"
+                  onChange={(value) => updateCharacter(index, { ...character, name: value })}
+                  value={character.name}
+                />
+                <SelectField
+                  label="主角属性"
+                  onChange={(value) => updateCharacter(index, { ...character, attribute: value as CharacterAttribute })}
+                  options={['1', '0', '0.5', '其他']}
+                  value={character.attribute}
+                />
                 <button onClick={() => removeCharacter(index)} type="button">删除</button>
               </div>
             ))}
@@ -2225,9 +2312,9 @@ function NovelFormView({
         </FormSection>
 
         <FormSection title="阅读信息">
-          <SelectField label="阅读状态" options={['看完', '荒废']} value={previewNovel.status} />
-          <SelectField label="个人评价" options={['喜欢', '一般', '不喜欢', '未评价']} value={previewNovel.rating} />
-          <Field label="阅读次数" value={`${previewNovel.readCount}`} />
+          <SelectField label="阅读状态" onChange={(value) => setStatus(value as ReadStatus)} options={['看完', '荒废']} value={previewNovel.status} />
+          <SelectField label="个人评价" onChange={(value) => setRating(value as Rating)} options={['喜欢', '一般', '不喜欢', '未评价']} value={previewNovel.rating} />
+          <Field label="阅读次数" onChange={setReadCountInput} value={readCountInput} />
         </FormSection>
 
         <FormSection title="标签和备注">
@@ -2265,14 +2352,14 @@ function NovelFormView({
           </div>
           <label className="textarea-field">
             <span>备注</span>
-            <textarea defaultValue={previewNovel.notes} />
+            <textarea onChange={(event) => setNotes(event.target.value)} value={previewNovel.notes} />
           </label>
         </FormSection>
 
         <div className="form-actions">
-          <button className="save-action" type="button">
+          <button className="save-action" disabled={saving} onClick={mode === 'new' ? handleSubmit : undefined} type="button">
             <Save size={17} />
-            保存
+            {saving ? '保存中' : '保存'}
           </button>
           <button onClick={() => setActiveView('home')} type="button">
             取消
@@ -2296,20 +2383,38 @@ function FormSection({ children, title }: { children: ReactNode; title: string }
   )
 }
 
-function Field({ label, value }: { label: string; value: string }) {
+function Field({
+  label,
+  onChange,
+  value,
+}: {
+  label: string
+  onChange?: (value: string) => void
+  value: string
+}) {
   return (
     <label className="field">
       <span>{label}</span>
-      <input defaultValue={value} />
+      <input onChange={(event) => onChange?.(event.target.value)} value={value} />
     </label>
   )
 }
 
-function SelectField({ label, options, value }: { label: string; options: string[]; value: string }) {
+function SelectField({
+  label,
+  onChange,
+  options,
+  value,
+}: {
+  label: string
+  onChange?: (value: string) => void
+  options: string[]
+  value: string
+}) {
   return (
     <label className="field">
       <span>{label}</span>
-      <select defaultValue={value}>
+      <select onChange={(event) => onChange?.(event.target.value)} value={value}>
         {options.map((option) => (
           <option key={option}>{option}</option>
         ))}
@@ -2447,6 +2552,12 @@ function topTags(source: Novel[], limit: number) {
   return Array.from(counts, ([tag, count]) => ({ tag, count }))
     .sort((a, b) => b.count - a.count || a.tag.localeCompare(b.tag, 'zh-Hans-CN'))
     .slice(0, limit)
+}
+
+function normalizeEndingForForm(ending: Novel['ending']): Novel['ending'] {
+  if (ending === '未完结') return '坑'
+  if (ending === '未知') return '其他'
+  return ending
 }
 
 function isLibraryView(view: View) {

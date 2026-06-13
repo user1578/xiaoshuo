@@ -9,3 +9,19 @@ export async function fetchNovels<TNovel = unknown>(): Promise<TNovel[]> {
 
   return response.json() as Promise<TNovel[]>
 }
+
+export async function createNovel<TNovel = unknown>(payload: unknown): Promise<TNovel> {
+  const response = await fetch(NOVELS_API_URL, {
+    body: JSON.stringify(payload),
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    method: 'POST',
+  })
+
+  if (!response.ok) {
+    throw new Error(`Failed to create novel: ${response.status}`)
+  }
+
+  return response.json() as Promise<TNovel>
+}
