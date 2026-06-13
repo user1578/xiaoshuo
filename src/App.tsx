@@ -26,7 +26,7 @@ import {
   UserRound,
   X,
 } from 'lucide-react'
-import { createNovel, fetchNovels, updateNovel } from './api/novels'
+import { createNovel, deleteNovel, fetchNovels, updateNovel } from './api/novels'
 import './App.css'
 
 type View =
@@ -893,6 +893,15 @@ function App() {
     setActiveView('all')
   }
 
+  const handleDeleteNovel = async (id: number) => {
+    await deleteNovel(id)
+    const apiNovels = await fetchNovels<Novel>()
+
+    setNovels(apiNovels)
+    setError(null)
+    setSelectedNovel(null)
+  }
+
   return (
     <main className="novel-app">
       <DecorativeLines />
@@ -1021,7 +1030,12 @@ function App() {
       </footer>
 
       {selectedNovel && (
-        <DetailModal novel={selectedNovel} onClose={() => setSelectedNovel(null)} onEdit={openEdit} />
+        <DetailModal
+          novel={selectedNovel}
+          onClose={() => setSelectedNovel(null)}
+          onDelete={handleDeleteNovel}
+          onEdit={openEdit}
+        />
       )}
       {aboutOpen && <AboutModal onClose={() => setAboutOpen(false)} />}
     </main>
@@ -2447,12 +2461,32 @@ function SelectField({
 function DetailModal({
   novel,
   onClose,
+  onDelete,
   onEdit,
 }: {
   novel: Novel
   onClose: () => void
+  onDelete: (id: number) => Promise<void>
   onEdit: (novel: Novel) => void
 }) {
+  const [deleting, setDeleting] = useState(false)
+  const [deleteError, setDeleteError] = useState<string | null>(null)
+
+  const handleDelete = async () => {
+    const confirmed = window.confirm(`确认删除《${novel.title}》吗？`)
+    if (!confirmed) return
+
+    setDeleting(true)
+    setDeleteError(null)
+
+    try {
+      await onDelete(novel.id)
+    } catch (error) {
+      setDeleteError(error instanceof Error ? error.message : '删除失败，请确认后端服务已启动')
+      setDeleting(false)
+    }
+  }
+
   return (
     <div className="modal-backdrop" onClick={onClose}>
       <article className="detail-modal" onClick={(event) => event.stopPropagation()}>
@@ -2487,14 +2521,15 @@ function DetailModal({
               ))}
             </div>
             <p className="detail-note">{novel.notes}</p>
+            {deleteError && <p role="alert">{deleteError}</p>}
             <div className="modal-actions">
               <button className="edit-button" onClick={() => onEdit(novel)} type="button">
                 <Edit3 size={17} />
                 编辑
               </button>
-              <button className="delete-button" type="button">
+              <button className="delete-button" disabled={deleting} onClick={handleDelete} type="button">
                 <Trash2 size={17} />
-                删除
+                {deleting ? '删除中' : '删除'}
               </button>
               <button className="close-outline" onClick={onClose} type="button">
                 关闭

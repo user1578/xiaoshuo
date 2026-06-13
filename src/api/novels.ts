@@ -41,3 +41,13 @@ export async function updateNovel<TNovel = unknown>(id: number, payload: unknown
 
   return response.json() as Promise<TNovel>
 }
+
+export async function deleteNovel(id: number): Promise<void> {
+  const response = await fetch(`${NOVELS_API_URL}/${id}`, {
+    method: 'DELETE',
+  })
+
+  if (!response.ok) {
+    throw new Error(`Failed to delete novel: ${response.status}`)
+  }
+}
