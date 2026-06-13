@@ -902,6 +902,40 @@ function App() {
     setSelectedNovel(null)
   }
 
+  const handleToggleFavorite = async (novel: Novel) => {
+    const today = new Date().toISOString().slice(0, 10)
+    const payload: NovelPayload = {
+      author: novel.author,
+      characters: novel.characters,
+      cover: novel.cover,
+      cpCategory: novel.cpCategory,
+      createdAt: novel.createdAt,
+      ending: normalizeEndingForForm(novel.ending),
+      favorite: !novel.favorite,
+      notes: novel.notes,
+      rating: novel.rating,
+      readCount: novel.readCount,
+      status: novel.status,
+      tags: novel.tags,
+      title: novel.title,
+      updatedAt: today,
+    }
+
+    try {
+      const updatedNovel = await updateNovel<Novel>(novel.id, payload)
+      const apiNovels = await fetchNovels<Novel>()
+
+      setNovels(apiNovels)
+      setError(null)
+      setSelectedNovel((currentNovel) => {
+        if (!currentNovel || currentNovel.id !== novel.id) return currentNovel
+        return apiNovels.find((item) => item.id === updatedNovel.id) ?? updatedNovel
+      })
+    } catch (toggleError) {
+      setError(toggleError instanceof Error ? toggleError.message : '收藏状态保存失败，请确认后端服务已启动')
+    }
+  }
+
   return (
     <main className="novel-app">
       <DecorativeLines />
@@ -962,6 +996,7 @@ function App() {
                 setCarouselIndex={setCarouselIndex}
                 setFilters={setFilters}
                 setSelectedNovel={setSelectedNovel}
+                onToggleFavorite={handleToggleFavorite}
                 setWallPage={setWallPage}
                 wallPage={wallPage}
               />
@@ -975,6 +1010,7 @@ function App() {
                 novels={visibleNovels}
                 setCarouselIndex={setCarouselIndex}
                 setSelectedNovel={setSelectedNovel}
+                onToggleFavorite={handleToggleFavorite}
                 setWallPage={setWallPage}
                 title={viewTitle(activeView)}
                 wallPage={wallPage}
@@ -1035,6 +1071,7 @@ function App() {
           onClose={() => setSelectedNovel(null)}
           onDelete={handleDeleteNovel}
           onEdit={openEdit}
+          onToggleFavorite={handleToggleFavorite}
         />
       )}
       {aboutOpen && <AboutModal onClose={() => setAboutOpen(false)} />}
@@ -1308,6 +1345,7 @@ function HomeView({
   commonTags,
   featuredNovels,
   novels,
+  onToggleFavorite,
   setActiveView,
   setCarouselIndex,
   setFilters,
@@ -1319,6 +1357,7 @@ function HomeView({
   commonTags: { tag: string; count: number }[]
   featuredNovels: Novel[]
   novels: Novel[]
+  onToggleFavorite: (novel: Novel) => Promise<void>
   setActiveView: (view: View) => void
   setCarouselIndex: (index: number) => void
   setFilters: (filters: FilterState) => void
@@ -1362,6 +1401,7 @@ function HomeView({
 
       <NovelWall
         novels={novels}
+        onToggleFavorite={onToggleFavorite}
         page={wallPage}
         setPage={setWallPage}
         setSelectedNovel={setSelectedNovel}
@@ -1504,6 +1544,7 @@ function RecentTimelineView({
 function LibraryView({
   carouselIndex,
   novels,
+  onToggleFavorite,
   setCarouselIndex,
   setSelectedNovel,
   setWallPage,
@@ -1512,6 +1553,7 @@ function LibraryView({
 }: {
   carouselIndex: number
   novels: Novel[]
+  onToggleFavorite: (novel: Novel) => Promise<void>
   setCarouselIndex: (index: number) => void
   setSelectedNovel: (novel: Novel) => void
   setWallPage: (page: number) => void
@@ -1529,6 +1571,7 @@ function LibraryView({
       />
       <NovelWall
         novels={novels}
+        onToggleFavorite={onToggleFavorite}
         page={wallPage}
         setPage={setWallPage}
         setSelectedNovel={setSelectedNovel}
@@ -1716,12 +1759,14 @@ function SpotlightCard({
 
 function NovelWall({
   novels,
+  onToggleFavorite,
   page,
   setPage,
   setSelectedNovel,
   title,
 }: {
   novels: Novel[]
+  onToggleFavorite: (novel: Novel) => Promise<void>
   page: number
   setPage: (page: number) => void
   setSelectedNovel: (novel: Novel) => void
@@ -1758,7 +1803,12 @@ function NovelWall({
       </div>
       <div className="wall-grid">
         {pageNovels.map((novel) => (
-          <WallCard key={novel.id} novel={novel} onOpen={() => setSelectedNovel(novel)} />
+          <WallCard
+            key={novel.id}
+            novel={novel}
+            onOpen={() => setSelectedNovel(novel)}
+            onToggleFavorite={() => onToggleFavorite(novel)}
+          />
         ))}
       </div>
       <div className="dots">
@@ -1776,10 +1826,26 @@ function NovelWall({
   )
 }
 
-function WallCard({ novel, onOpen }: { novel: Novel; onOpen: () => void }) {
+function WallCard({
+  novel,
+  onOpen,
+  onToggleFavorite,
+}: {
+  novel: Novel
+  onOpen: () => void
+  onToggleFavorite: () => Promise<void>
+}) {
   return (
     <article className="wall-card">
-      <button className={novel.favorite ? 'favorite active' : 'favorite'} type="button" aria-label="收藏">
+      <button
+        className={novel.favorite ? 'favorite active' : 'favorite'}
+        onClick={(event) => {
+          event.stopPropagation()
+          void onToggleFavorite()
+        }}
+        type="button"
+        aria-label="收藏"
+      >
         <Heart size={17} />
       </button>
       <CoverArt cover={novel.cover} size="wall" />
@@ -2463,14 +2529,18 @@ function DetailModal({
   onClose,
   onDelete,
   onEdit,
+  onToggleFavorite,
 }: {
   novel: Novel
   onClose: () => void
   onDelete: (id: number) => Promise<void>
   onEdit: (novel: Novel) => void
+  onToggleFavorite: (novel: Novel) => Promise<void>
 }) {
   const [deleting, setDeleting] = useState(false)
   const [deleteError, setDeleteError] = useState<string | null>(null)
+  const [favoriteError, setFavoriteError] = useState<string | null>(null)
+  const [savingFavorite, setSavingFavorite] = useState(false)
 
   const handleDelete = async () => {
     const confirmed = window.confirm(`确认删除《${novel.title}》吗？`)
@@ -2487,6 +2557,19 @@ function DetailModal({
     }
   }
 
+  const handleToggleFavorite = async () => {
+    setSavingFavorite(true)
+    setFavoriteError(null)
+
+    try {
+      await onToggleFavorite(novel)
+    } catch (error) {
+      setFavoriteError(error instanceof Error ? error.message : '收藏状态保存失败，请确认后端服务已启动')
+    } finally {
+      setSavingFavorite(false)
+    }
+  }
+
   return (
     <div className="modal-backdrop" onClick={onClose}>
       <article className="detail-modal" onClick={(event) => event.stopPropagation()}>
@@ -2499,8 +2582,22 @@ function DetailModal({
         <div className="detail-body">
           <CoverArt cover={novel.cover} size="detail" />
           <section className="detail-info">
-            <span className={novel.favorite ? 'favorite-label active' : 'favorite-label'}>
-              {novel.favorite ? '已收藏' : '未收藏'}
+            <span
+              className={novel.favorite ? 'favorite-label active' : 'favorite-label'}
+              onClick={() => {
+                if (!savingFavorite) void handleToggleFavorite()
+              }}
+              onKeyDown={(event) => {
+                if (savingFavorite) return
+                if (event.key === 'Enter' || event.key === ' ') {
+                  event.preventDefault()
+                  void handleToggleFavorite()
+                }
+              }}
+              role="button"
+              tabIndex={0}
+            >
+              {savingFavorite ? '保存中' : novel.favorite ? '已收藏' : '未收藏'}
             </span>
             <h2>{novel.title}</h2>
             <p>作者：{novel.author}</p>
@@ -2521,6 +2618,7 @@ function DetailModal({
               ))}
             </div>
             <p className="detail-note">{novel.notes}</p>
+            {favoriteError && <p role="alert">{favoriteError}</p>}
             {deleteError && <p role="alert">{deleteError}</p>}
             <div className="modal-actions">
               <button className="edit-button" onClick={() => onEdit(novel)} type="button">
