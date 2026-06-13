@@ -25,7 +25,7 @@ import {
   UserRound,
   X,
 } from 'lucide-react'
-import { createNovel, deleteNovel, fetchNovels, updateNovel } from './api/novels'
+import { createNovel, deleteNovel, exportNovelBackup, fetchNovels, updateNovel } from './api/novels'
 import './App.css'
 
 type View =
@@ -83,6 +83,12 @@ type Novel = {
 }
 
 type NovelPayload = Omit<Novel, 'id'>
+
+type NovelBackup = {
+  exportedAt: string
+  count: number
+  novels: Novel[]
+}
 
 type FilterState = {
   status: '全部' | ReadStatus
@@ -2067,6 +2073,8 @@ function StatsSecondaryPanel({
 }
 
 function BackupView({ novels }: { novels: Novel[] }) {
+  const [exporting, setExporting] = useState(false)
+  const [exportError, setExportError] = useState<string | null>(null)
   const backupStats = [
     { label: '最近备份时间', value: '2026-06-10 23:18' },
     { label: '当前小说数量', value: `${novels.length} 本` },
@@ -2078,6 +2086,30 @@ function BackupView({ novels }: { novels: Novel[] }) {
     { date: '2026-05-28', title: '手动整理标签后备份', type: '手动整理' },
     { date: '2026-05-16', title: '初始小说清单备份', type: '初始清单' },
   ]
+
+  const handleExportJson = async () => {
+    setExporting(true)
+    setExportError(null)
+
+    try {
+      const backup = await exportNovelBackup<NovelBackup>()
+      const today = new Date().toISOString().slice(0, 10)
+      const blob = new Blob([JSON.stringify(backup, null, 2)], { type: 'application/json;charset=utf-8' })
+      const url = URL.createObjectURL(blob)
+      const link = document.createElement('a')
+
+      link.href = url
+      link.download = `novel-backup-${today}.json`
+      document.body.append(link)
+      link.click()
+      link.remove()
+      URL.revokeObjectURL(url)
+    } catch (error) {
+      setExportError(error instanceof Error ? error.message : '导出失败，请确认后端服务已启动')
+    } finally {
+      setExporting(false)
+    }
+  }
 
   return (
     <section className="backup-page plain-section">
@@ -2114,28 +2146,18 @@ function BackupView({ novels }: { novels: Novel[] }) {
       <div className="backup-grid backup-action-grid">
         <article className="backup-card export-card">
           <h3>导出方式</h3>
-          <p>第一阶段只做静态入口，真实导出会在接入本地数据后实现。</p>
+          <p>导出当前 SQLite 中的完整小说 JSON 数据，适合手动留存和迁移前备份。</p>
           <div className="backup-buttons">
-            <button type="button">导出 JSON</button>
-            <button type="button">导出 CSV</button>
-            <button type="button">全部数据说明</button>
+            <button disabled={exporting} onClick={handleExportJson} type="button">
+              {exporting ? '导出中' : '导出 JSON'}
+            </button>
           </div>
+          {exportError && <p role="alert">{exportError}</p>}
           <ul>
-            <li>JSON 用于完整恢复。</li>
-            <li>CSV 适合表格查看和临时整理。</li>
-            <li>导出前会保留当前筛选和统计快照。</li>
+            <li>文件名格式为 novel-backup-日期.json。</li>
+            <li>JSON 包含小说基础信息、主角、标签、评价、阅读次数和时间记录。</li>
+            <li>本阶段只提供导出，不提供导入。</li>
           </ul>
-        </article>
-
-        <article className="backup-card import-card">
-          <h3>导入区域</h3>
-          <p>导入前先检查文件结构，再预览即将变化的数据。当前阶段保留模拟流程。</p>
-          <div className="import-steps">
-            <span>1 选择 JSON 文件</span>
-            <span>2 导入前检查</span>
-            <span>3 导入后预览</span>
-          </div>
-          <button type="button">选择 JSON 文件</button>
         </article>
       </div>
 
@@ -2155,12 +2177,12 @@ function BackupView({ novels }: { novels: Novel[] }) {
 
         <article className="backup-card safety-card">
           <h3>安全提示</h3>
-          <p>导入前建议先导出一份当前数据。后续如果涉及删除或覆盖，会加入二次确认。</p>
+          <p>导出的 JSON 文件请保存在本机稳定目录中。后续如果增加导入能力，会单独加入检查和确认流程。</p>
           <div className="safety-tags">
-            <span>先备份</span>
-            <span>再导入</span>
-            <span>看预览</span>
-            <span>二次确认</span>
+            <span>手动留存</span>
+            <span>本地文件</span>
+            <span>JSON</span>
+            <span>只导出</span>
           </div>
         </article>
       </div>

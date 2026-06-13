@@ -66,6 +66,16 @@ const server = http.createServer(async (req, res) => {
       return
     }
 
+    if (req.method === 'GET' && url.pathname === '/api/backup/export') {
+      const novels = listNovels(db)
+      sendJson(res, 200, {
+        exportedAt: new Date().toISOString(),
+        count: novels.length,
+        novels,
+      })
+      return
+    }
+
     const novelId = parseNovelId(url.pathname)
     if (novelId !== null) {
       if (req.method === 'GET') {

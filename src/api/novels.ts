@@ -1,4 +1,5 @@
 const NOVELS_API_URL = 'http://127.0.0.1:3001/api/novels'
+const BACKUP_EXPORT_API_URL = 'http://127.0.0.1:3001/api/backup/export'
 
 export async function fetchNovels<TNovel = unknown>(): Promise<TNovel[]> {
   const response = await fetch(NOVELS_API_URL)
@@ -50,4 +51,14 @@ export async function deleteNovel(id: number): Promise<void> {
   if (!response.ok) {
     throw new Error(`Failed to delete novel: ${response.status}`)
   }
+}
+
+export async function exportNovelBackup<TBackup = unknown>(): Promise<TBackup> {
+  const response = await fetch(BACKUP_EXPORT_API_URL)
+
+  if (!response.ok) {
+    throw new Error(`Failed to export novel backup: ${response.status}`)
+  }
+
+  return response.json() as Promise<TBackup>
 }
