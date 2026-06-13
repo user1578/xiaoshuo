@@ -26,7 +26,7 @@ import {
   UserRound,
   X,
 } from 'lucide-react'
-import { createNovel, fetchNovels } from './api/novels'
+import { createNovel, fetchNovels, updateNovel } from './api/novels'
 import './App.css'
 
 type View =
@@ -883,6 +883,16 @@ function App() {
     setActiveView('all')
   }
 
+  const handleUpdateNovel = async (id: number, payload: NovelPayload) => {
+    const updatedNovel = await updateNovel<Novel>(id, payload)
+    const apiNovels = await fetchNovels<Novel>()
+
+    setNovels(apiNovels)
+    setError(null)
+    setSelectedNovel(apiNovels.find((novel) => novel.id === updatedNovel.id) ?? updatedNovel)
+    setActiveView('all')
+  }
+
   return (
     <main className="novel-app">
       <DecorativeLines />
@@ -981,6 +991,7 @@ function App() {
                 mode="edit"
                 novel={editingNovel ?? novels[0] ?? mockNovels[0]}
                 setActiveView={setActiveView}
+                onUpdateNovel={handleUpdateNovel}
               />
             )}
           </div>
@@ -2101,6 +2112,7 @@ function NovelFormView({
   mode,
   novel,
   onCreateNovel,
+  onUpdateNovel,
   setActiveView,
 }: {
   allTags: string[]
@@ -2108,6 +2120,7 @@ function NovelFormView({
   mode: 'new' | 'edit'
   novel?: Novel
   onCreateNovel?: (payload: NovelPayload) => Promise<void>
+  onUpdateNovel?: (id: number, payload: NovelPayload) => Promise<void>
   setActiveView: (view: View) => void
 }) {
   const baseNovel = novel ?? {
@@ -2173,30 +2186,38 @@ function NovelFormView({
   }
 
   const handleSubmit = async () => {
-    if (mode !== 'new' || !onCreateNovel) return
+    if (mode === 'new' && !onCreateNovel) return
+    if (mode === 'edit' && (!novel || !onUpdateNovel)) return
 
     setSaving(true)
     setSubmitError(null)
 
     const today = new Date().toISOString().slice(0, 10)
+    const payload: NovelPayload = {
+      author: previewNovel.author,
+      characters: previewNovel.characters,
+      cover: previewNovel.cover,
+      cpCategory: previewNovel.cpCategory,
+      createdAt: previewNovel.createdAt,
+      ending: normalizeEndingForForm(previewNovel.ending),
+      favorite: previewNovel.favorite,
+      notes: previewNovel.notes,
+      rating: previewNovel.rating,
+      readCount: previewNovel.readCount,
+      status: previewNovel.status,
+      tags: previewNovel.tags,
+      title: previewNovel.title,
+      updatedAt: today,
+    }
 
     try {
-      await onCreateNovel({
-        author: previewNovel.author,
-        characters: previewNovel.characters,
-        cover: previewNovel.cover,
-        cpCategory: previewNovel.cpCategory,
-        createdAt: today,
-        ending: normalizeEndingForForm(previewNovel.ending),
-        favorite: previewNovel.favorite,
-        notes: previewNovel.notes,
-        rating: previewNovel.rating,
-        readCount: previewNovel.readCount,
-        status: previewNovel.status,
-        tags: previewNovel.tags,
-        title: previewNovel.title,
-        updatedAt: today,
-      })
+      if (mode === 'new' && onCreateNovel) {
+        await onCreateNovel({ ...payload, createdAt: today })
+      }
+
+      if (mode === 'edit' && novel && onUpdateNovel) {
+        await onUpdateNovel(novel.id, payload)
+      }
     } catch (error) {
       setSubmitError(error instanceof Error ? error.message : '保存失败，请确认后端服务已启动')
     } finally {
@@ -2357,7 +2378,7 @@ function NovelFormView({
         </FormSection>
 
         <div className="form-actions">
-          <button className="save-action" disabled={saving} onClick={mode === 'new' ? handleSubmit : undefined} type="button">
+          <button className="save-action" disabled={saving} onClick={handleSubmit} type="button">
             <Save size={17} />
             {saving ? '保存中' : '保存'}
           </button>
