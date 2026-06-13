@@ -12,7 +12,6 @@ import {
   Clock3,
   Edit3,
   Filter,
-  Heart,
   Home,
   LibraryBig,
   Plus,
@@ -35,6 +34,7 @@ type View =
   | 'recent'
   | 'authors'
   | 'finished'
+  | 'liked'
   | 'abandoned'
   | 'stats'
   | 'backup'
@@ -713,25 +713,26 @@ function getNavGroups(novels: Novel[]): { title: string; items: NavItem[] }[] {
         { id: 'all', label: '全部小说', icon: LibraryBig, count: novels.length },
         { id: 'recent', label: '最近添加', icon: Clock3, count: 6 },
         { id: 'authors', label: '作者归档', icon: UserRound, count: new Set(novels.map((novel) => novel.author)).size },
-        { id: 'finished', label: '看完', icon: BookOpen, count: countBy(novels, 'status', '看完') },
-        { id: 'abandoned', label: '荒废', icon: Trash2, count: countBy(novels, 'status', '荒废') },
+        { id: 'finished', label: '看完', icon: BookOpen, count: novels.filter(isFinishedNovel).length },
+        { id: 'liked', label: '喜欢', icon: Star, count: novels.filter(isLikedNovel).length },
+        { id: 'abandoned', label: '荒废', icon: Trash2, count: novels.filter(isAbandonedNovel).length },
         { id: 'stats', label: '统计', icon: BarChart3, count: 7 },
         { id: 'backup', label: '备份', icon: Archive, count: 2 },
-      ],
-    },
-    {
-      title: 'CP类别',
-      items: [
-        { id: 'cp-1v1', label: '1v1', icon: Star, count: countBy(novels, 'cpCategory', '1v1') },
-        { id: 'cp-none', label: '无CP', icon: Star, count: countBy(novels, 'cpCategory', '无CP') },
-        { id: 'cp-np', label: 'NP', icon: Sparkles, count: countBy(novels, 'cpCategory', 'NP') },
       ],
     },
   ]
 }
 
-function countBy<K extends keyof Novel>(novels: Novel[], key: K, value: Novel[K]) {
-  return novels.filter((novel) => novel[key] === value).length
+function isFinishedNovel(novel: Novel) {
+  return novel.status === '看完' && novel.rating !== '喜欢'
+}
+
+function isLikedNovel(novel: Novel) {
+  return novel.rating === '喜欢'
+}
+
+function isAbandonedNovel(novel: Novel) {
+  return novel.status === '荒废'
 }
 
 function normalizeComparableText(value: string, { stripBookMarks = false } = {}) {
@@ -828,9 +829,10 @@ function App() {
 
   const stats = {
     total: novels.length,
-    liked: countBy(novels, 'rating', '喜欢'),
+    finished: novels.filter(isFinishedNovel).length,
+    liked: novels.filter(isLikedNovel).length,
     authors: new Set(novels.map((novel) => novel.author)).size,
-    abandoned: countBy(novels, 'status', '荒废'),
+    abandoned: novels.filter(isAbandonedNovel).length,
   }
 
   const allTags = Array.from(new Set(novels.flatMap((novel) => novel.tags)))
@@ -869,8 +871,9 @@ function App() {
 
   const visibleNovels = useMemo(() => {
     const viewFilters: Partial<Record<View, (novel: Novel) => boolean>> = {
-      finished: (novel) => novel.status === '看完',
-      abandoned: (novel) => novel.status === '荒废',
+      finished: isFinishedNovel,
+      liked: isLikedNovel,
+      abandoned: isAbandonedNovel,
       'cp-1v1': (novel) => novel.cpCategory === '1v1',
       'cp-none': (novel) => novel.cpCategory === '无CP',
       'cp-np': (novel) => novel.cpCategory === 'NP',
@@ -896,8 +899,8 @@ function App() {
     return {
       author,
       works,
-      liked: works.filter((novel) => novel.rating === '喜欢').length,
-      finished: works.filter((novel) => novel.status === '看完').length,
+      liked: works.filter(isLikedNovel).length,
+      finished: works.filter(isFinishedNovel).length,
     }
   })
 
@@ -936,40 +939,6 @@ function App() {
     setSelectedNovel(null)
   }
 
-  const handleToggleFavorite = async (novel: Novel) => {
-    const today = new Date().toISOString().slice(0, 10)
-    const payload: NovelPayload = {
-      author: novel.author,
-      characters: novel.characters,
-      cover: novel.cover,
-      cpCategory: novel.cpCategory,
-      createdAt: novel.createdAt,
-      ending: normalizeEndingForForm(novel.ending),
-      favorite: !novel.favorite,
-      notes: novel.notes,
-      rating: novel.rating,
-      readCount: novel.readCount,
-      status: novel.status,
-      tags: novel.tags,
-      title: novel.title,
-      updatedAt: today,
-    }
-
-    try {
-      const updatedNovel = await updateNovel<Novel>(novel.id, payload)
-      const apiNovels = await fetchNovels<Novel>()
-
-      setNovels(apiNovels)
-      setError(null)
-      setSelectedNovel((currentNovel) => {
-        if (!currentNovel || currentNovel.id !== novel.id) return currentNovel
-        return apiNovels.find((item) => item.id === updatedNovel.id) ?? updatedNovel
-      })
-    } catch (toggleError) {
-      setError(toggleError instanceof Error ? toggleError.message : '收藏状态保存失败，请确认后端服务已启动')
-    }
-  }
-
   return (
     <main className="novel-app">
       <DecorativeLines />
@@ -981,7 +950,7 @@ function App() {
           </span>
           <span>
             <strong>小说袋</strong>
-            <em>私人小说收藏馆</em>
+            <em>私人小说书库</em>
           </span>
         </button>
         <p className="top-note">今天也记录一点喜欢的故事吧</p>
@@ -1030,7 +999,6 @@ function App() {
                 setCarouselIndex={setCarouselIndex}
                 setFilters={setFilters}
                 setSelectedNovel={setSelectedNovel}
-                onToggleFavorite={handleToggleFavorite}
                 setWallPage={setWallPage}
                 wallPage={wallPage}
               />
@@ -1044,7 +1012,6 @@ function App() {
                 novels={visibleNovels}
                 setCarouselIndex={setCarouselIndex}
                 setSelectedNovel={setSelectedNovel}
-                onToggleFavorite={handleToggleFavorite}
                 setWallPage={setWallPage}
                 title={viewTitle(activeView)}
                 wallPage={wallPage}
@@ -1107,7 +1074,6 @@ function App() {
           onClose={() => setSelectedNovel(null)}
           onDelete={handleDeleteNovel}
           onEdit={openEdit}
-          onToggleFavorite={handleToggleFavorite}
         />
       )}
       {aboutOpen && <AboutModal onClose={() => setAboutOpen(false)} />}
@@ -1174,7 +1140,7 @@ function Toolbar({
   setActiveView: (view: View) => void
   setFilterOpen: (open: boolean) => void
   setQuery: (query: string) => void
-  stats: { total: number; liked: number; authors: number; abandoned: number }
+  stats: { total: number; finished: number; liked: number; authors: number; abandoned: number }
 }) {
   const [profileOpen, setProfileOpen] = useState(false)
 
@@ -1198,7 +1164,7 @@ function Toolbar({
       </button>
       <div className="compact-stats">
         <StatBlock label="小说总数" value={stats.total} />
-        <StatBlock label="作者" value={stats.authors} />
+        <StatBlock label="看完" value={stats.finished} />
         <StatBlock label="喜欢" value={stats.liked} />
         <StatBlock label="荒废" value={stats.abandoned} />
       </div>
@@ -1381,7 +1347,6 @@ function HomeView({
   commonTags,
   featuredNovels,
   novels,
-  onToggleFavorite,
   setActiveView,
   setCarouselIndex,
   setFilters,
@@ -1393,7 +1358,6 @@ function HomeView({
   commonTags: { tag: string; count: number }[]
   featuredNovels: Novel[]
   novels: Novel[]
-  onToggleFavorite: (novel: Novel) => Promise<void>
   setActiveView: (view: View) => void
   setCarouselIndex: (index: number) => void
   setFilters: (filters: FilterState) => void
@@ -1437,7 +1401,6 @@ function HomeView({
 
       <NovelWall
         novels={novels}
-        onToggleFavorite={onToggleFavorite}
         page={wallPage}
         setPage={setWallPage}
         setSelectedNovel={setSelectedNovel}
@@ -1538,10 +1501,6 @@ function RecentTimelineView({
                   role="button"
                   tabIndex={0}
                 >
-                  <span className={novel.favorite ? 'timeline-favorite active' : 'timeline-favorite'}>
-                    <Heart size={15} />
-                    {novel.favorite ? '已收藏' : '未收藏'}
-                  </span>
                   <h3>{novel.title}</h3>
                   <p>{novel.author}</p>
                   <div className="timeline-meta">
@@ -1580,7 +1539,6 @@ function RecentTimelineView({
 function LibraryView({
   carouselIndex,
   novels,
-  onToggleFavorite,
   setCarouselIndex,
   setSelectedNovel,
   setWallPage,
@@ -1589,7 +1547,6 @@ function LibraryView({
 }: {
   carouselIndex: number
   novels: Novel[]
-  onToggleFavorite: (novel: Novel) => Promise<void>
   setCarouselIndex: (index: number) => void
   setSelectedNovel: (novel: Novel) => void
   setWallPage: (page: number) => void
@@ -1607,7 +1564,6 @@ function LibraryView({
       />
       <NovelWall
         novels={novels}
-        onToggleFavorite={onToggleFavorite}
         page={wallPage}
         setPage={setWallPage}
         setSelectedNovel={setSelectedNovel}
@@ -1795,14 +1751,12 @@ function SpotlightCard({
 
 function NovelWall({
   novels,
-  onToggleFavorite,
   page,
   setPage,
   setSelectedNovel,
   title,
 }: {
   novels: Novel[]
-  onToggleFavorite: (novel: Novel) => Promise<void>
   page: number
   setPage: (page: number) => void
   setSelectedNovel: (novel: Novel) => void
@@ -1843,7 +1797,6 @@ function NovelWall({
             key={novel.id}
             novel={novel}
             onOpen={() => setSelectedNovel(novel)}
-            onToggleFavorite={() => onToggleFavorite(novel)}
           />
         ))}
       </div>
@@ -1865,25 +1818,12 @@ function NovelWall({
 function WallCard({
   novel,
   onOpen,
-  onToggleFavorite,
 }: {
   novel: Novel
   onOpen: () => void
-  onToggleFavorite: () => Promise<void>
 }) {
   return (
     <article className="wall-card">
-      <button
-        className={novel.favorite ? 'favorite active' : 'favorite'}
-        onClick={(event) => {
-          event.stopPropagation()
-          void onToggleFavorite()
-        }}
-        type="button"
-        aria-label="收藏"
-      >
-        <Heart size={17} />
-      </button>
       <CoverArt cover={novel.cover} size="wall" />
       <div className="wall-info">
         <h3>{novel.title}</h3>
@@ -1946,12 +1886,13 @@ function StatsView({
 }: {
   authors: { author: string; works: Novel[]; liked: number; finished: number }[]
   novels: Novel[]
-  stats: { total: number; liked: number; authors: number; abandoned: number }
+  stats: { total: number; finished: number; liked: number; authors: number; abandoned: number }
 }) {
-  const statusCounts = ['看完', '荒废'].map((status) => ({
-    label: status,
-    count: novels.filter((novel) => novel.status === status).length,
-  }))
+  const statusCounts = [
+    { label: '看完', count: stats.finished },
+    { label: '喜欢', count: stats.liked },
+    { label: '荒废', count: stats.abandoned },
+  ]
   const cpCounts = ['1v1', '无CP', 'NP'].map((category) => ({
     label: category,
     count: novels.filter((novel) => novel.cpCategory === category).length,
@@ -1982,13 +1923,18 @@ function StatsView({
             <div className="stats-hero-copy">
               <span className="stats-eyebrow">私人阅读地图</span>
               <strong className="stats-big-number">{stats.total}</strong>
-              <p>本小说被收藏在这里</p>
+              <p>本小说记录在这里</p>
             </div>
             <div className="stats-hero-metrics" aria-label="核心统计">
               <span>
                 <em>作者</em>
                 <strong>{stats.authors}</strong>
                 <i>位</i>
+              </span>
+              <span>
+                <em>看完</em>
+                <strong>{stats.finished}</strong>
+                <i>本</i>
               </span>
               <span>
                 <em>喜欢</em>
@@ -2244,7 +2190,7 @@ function NovelFormView({
   const baseNovel = novel ?? {
     ...fallbackNovel,
     id: 99,
-    title: '新收藏的故事',
+    title: '新记录的故事',
     author: '待填写作者',
     status: '看完' as ReadStatus,
     rating: '未评价' as Rating,
@@ -2481,7 +2427,7 @@ function NovelFormView({
         <FormSection title="主角">
           <div className="character-editor">
             {characters.map((character, index) => (
-              <div className="character-row" key={`${character.name}-${index}`}>
+              <div className="character-row" key={`character-${index}`}>
                 <Field
                   label="主角"
                   onChange={(value) => updateCharacter(index, { ...character, name: value })}
@@ -2619,18 +2565,14 @@ function DetailModal({
   onClose,
   onDelete,
   onEdit,
-  onToggleFavorite,
 }: {
   novel: Novel
   onClose: () => void
   onDelete: (id: number) => Promise<void>
   onEdit: (novel: Novel) => void
-  onToggleFavorite: (novel: Novel) => Promise<void>
 }) {
   const [deleting, setDeleting] = useState(false)
   const [deleteError, setDeleteError] = useState<string | null>(null)
-  const [favoriteError, setFavoriteError] = useState<string | null>(null)
-  const [savingFavorite, setSavingFavorite] = useState(false)
 
   const handleDelete = async () => {
     const confirmed = window.confirm(`确认删除《${novel.title}》吗？`)
@@ -2647,19 +2589,6 @@ function DetailModal({
     }
   }
 
-  const handleToggleFavorite = async () => {
-    setSavingFavorite(true)
-    setFavoriteError(null)
-
-    try {
-      await onToggleFavorite(novel)
-    } catch (error) {
-      setFavoriteError(error instanceof Error ? error.message : '收藏状态保存失败，请确认后端服务已启动')
-    } finally {
-      setSavingFavorite(false)
-    }
-  }
-
   return (
     <div className="modal-backdrop" onClick={onClose}>
       <article className="detail-modal" onClick={(event) => event.stopPropagation()}>
@@ -2672,23 +2601,6 @@ function DetailModal({
         <div className="detail-body">
           <CoverArt cover={novel.cover} size="detail" />
           <section className="detail-info">
-            <span
-              className={novel.favorite ? 'favorite-label active' : 'favorite-label'}
-              onClick={() => {
-                if (!savingFavorite) void handleToggleFavorite()
-              }}
-              onKeyDown={(event) => {
-                if (savingFavorite) return
-                if (event.key === 'Enter' || event.key === ' ') {
-                  event.preventDefault()
-                  void handleToggleFavorite()
-                }
-              }}
-              role="button"
-              tabIndex={0}
-            >
-              {savingFavorite ? '保存中' : novel.favorite ? '已收藏' : '未收藏'}
-            </span>
             <h2>{novel.title}</h2>
             <p>作者：{novel.author}</p>
             <div className="detail-grid">
@@ -2708,7 +2620,6 @@ function DetailModal({
               ))}
             </div>
             <p className="detail-note">{novel.notes}</p>
-            {favoriteError && <p role="alert">{favoriteError}</p>}
             {deleteError && <p role="alert">{deleteError}</p>}
             <div className="modal-actions">
               <button className="edit-button" onClick={() => onEdit(novel)} type="button">
@@ -2805,7 +2716,7 @@ function normalizeEndingForForm(ending: Novel['ending']): Novel['ending'] {
 }
 
 function isLibraryView(view: View) {
-  return ['all', 'finished', 'abandoned', 'cp-1v1', 'cp-none', 'cp-np'].includes(view)
+  return ['all', 'finished', 'liked', 'abandoned', 'cp-1v1', 'cp-none', 'cp-np'].includes(view)
 }
 
 function viewTitle(view: View) {
@@ -2813,6 +2724,7 @@ function viewTitle(view: View) {
     all: '全部小说',
     recent: '最近添加',
     finished: '看完',
+    liked: '喜欢',
     abandoned: '荒废',
     'cp-1v1': '1v1',
     'cp-none': '无CP',
