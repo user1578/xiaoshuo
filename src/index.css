@@ -1,0 +1,83 @@
+:root {
+  --deep-navy: #0b1f33;
+  --text-strong: #172435;
+  --deep-blue: #1f344a;
+  --page-bg: #dfe8f1;
+  --main-blue: #4f6b86;
+  --blue-mid: #8fa9c2;
+  --blue-soft: #c9d7e5;
+  --blue-mist: #d7dce2;
+  --cream: #f8f5ee;
+  --paper: #ece9e2;
+  --gray-purple: #8b7f98;
+  --pink-soft: #ded0d0;
+  --lavender: #d4cfdd;
+  --wine: #9a3f3f;
+  --deep-wine: #743434;
+  --yellow: #e2dccf;
+  --red: #9a3f3f;
+  --border: #c8d0d8;
+  --text: #2f4358;
+  --muted: #637083;
+  --card-shadow: 0 14px 32px rgba(11, 31, 51, 0.14);
+  --soft-shadow: 0 8px 20px rgba(11, 31, 51, 0.08);
+
+  color: var(--text);
+  background: var(--page-bg);
+  font: 16px/1.5 'Segoe UI', 'Microsoft YaHei UI', 'Microsoft YaHei', system-ui, sans-serif;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  min-width: 320px;
+  margin: 0;
+  background:
+    radial-gradient(circle at 82% 10%, rgba(143, 169, 194, 0.22), transparent 30%),
+    radial-gradient(circle at 10% 84%, rgba(201, 215, 229, 0.26), transparent 30%),
+    radial-gradient(circle at 58% 34%, rgba(139, 127, 152, 0.12), transparent 28%),
+    radial-gradient(circle at 92% 18%, rgba(154, 63, 63, 0.08), transparent 18%),
+    linear-gradient(135deg, #c9d7e5 0%, #f8f5ee 48%, #ece9e2 100%);
+  background-size: 118% 118%;
+  animation: background-breathe 14s ease-in-out infinite alternate;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+}
+
+button,
+a {
+  -webkit-tap-highlight-color: transparent;
+}
+
+p {
+  margin: 0;
+}
+
+#root {
+  min-height: 100svh;
+}
+
+@keyframes background-breathe {
+  from {
+    background-position: 0% 20%;
+  }
+
+  to {
+    background-position: 70% 54%;
+  }
+}
