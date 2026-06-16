@@ -1336,6 +1336,69 @@ button:focus-visible,
   height: 34px;
 }
 
+.wall-controls .bulk-manage-button {
+  width: auto;
+  padding: 0 10px;
+}
+
+.bulk-delete-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-height: 44px;
+  margin-bottom: 12px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: rgba(248, 245, 238, 0.92);
+  box-shadow: var(--soft-shadow);
+}
+
+.bulk-delete-bar > span {
+  color: var(--deep-blue);
+  font-weight: 900;
+}
+
+.bulk-delete-bar div {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.bulk-delete-bar button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 34px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0 10px;
+  color: var(--text-strong);
+  background: var(--cream);
+  cursor: pointer;
+  font-weight: 900;
+}
+
+.bulk-delete-bar .delete-button {
+  border-color: var(--wine);
+  color: var(--cream);
+  background: var(--wine);
+}
+
+.bulk-delete-bar button:disabled {
+  cursor: not-allowed;
+  opacity: 0.58;
+  transform: none;
+}
+
+.bulk-delete-bar p {
+  width: 100%;
+  margin: 0;
+  color: var(--wine);
+  font-weight: 800;
+}
+
 .wall-card {
   position: relative;
   display: grid;
@@ -1350,6 +1413,37 @@ button:focus-visible,
     border-color 220ms ease,
     box-shadow 220ms ease,
     transform 220ms ease;
+}
+
+.wall-card.selected {
+  border-color: var(--wine);
+  box-shadow: 0 0 0 2px rgba(154, 63, 63, 0.18), var(--soft-shadow);
+}
+
+.wall-select {
+  position: absolute;
+  top: 18px;
+  left: 18px;
+  z-index: 4;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 30px;
+  padding: 4px 8px;
+  border: 1px solid rgba(36, 59, 90, 0.24);
+  border-radius: 8px;
+  color: var(--text-strong);
+  background: rgba(248, 245, 238, 0.94);
+  box-shadow: var(--soft-shadow);
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.wall-select input {
+  width: 15px;
+  height: 15px;
+  accent-color: var(--wine);
 }
 
 .wall-card:nth-child(5n + 1) {

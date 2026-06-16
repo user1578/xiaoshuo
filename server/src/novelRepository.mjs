@@ -7,6 +7,7 @@ const RATINGS = new Set(['喜欢', '一般', '不喜欢', '未评价'])
 const CHARACTER_ATTRIBUTES = new Set(['1', '0', '0.5', '其他'])
 
 const DEFAULT_COVER = 'book'
+const AVAILABLE_COVERS = ['portrait', 'apple', 'cat', 'book', 'flower', 'moon', 'cloud', 'line']
 const REQUIRED_CSV_HEADERS = [
   '书名',
   '作者',
@@ -21,6 +22,18 @@ const REQUIRED_CSV_HEADERS = [
   '阅读次数',
 ]
 const OPTIONAL_CSV_HEADERS = ['标签', '备注']
+
+function pickStableCover(title, author) {
+  const source = `${title}\u0000${author}`
+  let hash = 2166136261
+
+  for (const character of source) {
+    hash ^= character.codePointAt(0) ?? 0
+    hash = Math.imul(hash, 16777619)
+  }
+
+  return AVAILABLE_COVERS[Math.abs(hash) % AVAILABLE_COVERS.length] ?? DEFAULT_COVER
+}
 
 function normalizeEnding(value) {
   if (ENDINGS.has(value)) return value
@@ -350,7 +363,7 @@ function mapCsvRecord(record, rowNumber) {
     readCount: Number.isInteger(readCount) && readCount >= 0 ? readCount : 1,
     tags: parseCsvTags(csvCell(record, '标签')),
     notes: csvCell(record, '备注'),
-    cover: DEFAULT_COVER,
+    cover: pickStableCover(title, author),
     favorite: 0,
     createdAt: now,
     updatedAt: now,
@@ -475,6 +488,62 @@ function selectNovelRows(db, whereClause = '', params = []) {
        ORDER BY novels.updated_at DESC, novels.id DESC`,
     )
     .all(...params)
+}
+
+function escapeCsvCell(value) {
+  const text = String(value ?? '')
+
+  if (/[",\r\n]/.test(text)) {
+    return `"${text.replaceAll('"', '""')}"`
+  }
+
+  return text
+}
+
+function mapNovelToCsvRow(novel) {
+  const [firstCharacter, secondCharacter, ...extraCharacters] = novel.characters
+  const extraCharacterNote =
+    extraCharacters.length > 0
+      ? `\u989d\u5916\u4e3b\u89d2\uff1a${extraCharacters.map((character) => `${character.name} ${character.attribute}`).join('\uff1b')}`
+      : ''
+  const notes = [novel.notes, extraCharacterNote].filter(Boolean).join('\n')
+
+  return [
+    novel.title,
+    novel.author,
+    firstCharacter?.name ?? '',
+    firstCharacter?.attribute ?? '',
+    secondCharacter?.name ?? '',
+    secondCharacter?.attribute ?? '',
+    novel.cpCategory,
+    novel.ending,
+    novel.status,
+    novel.rating,
+    novel.readCount,
+    novel.tags.join('\uff0c'),
+    notes,
+  ]
+}
+
+export function exportNovelsCsv(db) {
+  const headers = [
+    '\u4e66\u540d',
+    '\u4f5c\u8005',
+    '\u4e3b\u89d21',
+    '\u4e3b\u89d21\u5c5e\u6027',
+    '\u4e3b\u89d22',
+    '\u4e3b\u89d22\u5c5e\u6027',
+    'CP\u7c7b\u522b',
+    '\u7ed3\u5c40',
+    '\u9605\u8bfb\u72b6\u6001',
+    '\u4e2a\u4eba\u8bc4\u4ef7',
+    '\u9605\u8bfb\u6b21\u6570',
+    '\u6807\u7b7e',
+    '\u5907\u6ce8',
+  ]
+  const rows = listNovels(db).map(mapNovelToCsvRow)
+
+  return [headers, ...rows].map((row) => row.map(escapeCsvCell).join(',')).join('\r\n')
 }
 
 export function listNovels(db) {
