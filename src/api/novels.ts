@@ -1,5 +1,6 @@
 const NOVELS_API_URL = 'http://127.0.0.1:3001/api/novels'
 const BACKUP_EXPORT_API_URL = 'http://127.0.0.1:3001/api/backup/export'
+const BACKUP_EXPORT_CSV_API_URL = 'http://127.0.0.1:3001/api/backup/export.csv'
 const BACKUP_IMPORT_API_URL = 'http://127.0.0.1:3001/api/backup/import'
 const CSV_IMPORT_PREVIEW_API_URL = 'http://127.0.0.1:3001/api/import/csv/preview'
 const CSV_IMPORT_CONFIRM_API_URL = 'http://127.0.0.1:3001/api/import/csv/confirm'
@@ -46,10 +47,14 @@ export async function updateNovel<TNovel = unknown>(id: number, payload: unknown
   return response.json() as Promise<TNovel>
 }
 
-export async function deleteNovel(id: number): Promise<void> {
+export async function deleteNovel(id: number, options?: { ignoreNotFound?: boolean }): Promise<void> {
   const response = await fetch(`${NOVELS_API_URL}/${id}`, {
     method: 'DELETE',
   })
+
+  if (response.status === 404 && options?.ignoreNotFound) {
+    return
+  }
 
   if (!response.ok) {
     throw new Error(`Failed to delete novel: ${response.status}`)
@@ -64,6 +69,16 @@ export async function exportNovelBackup<TBackup = unknown>(): Promise<TBackup> {
   }
 
   return response.json() as Promise<TBackup>
+}
+
+export async function exportNovelCsv(): Promise<string> {
+  const response = await fetch(BACKUP_EXPORT_CSV_API_URL)
+
+  if (!response.ok) {
+    throw new Error(`Failed to export novel CSV: ${response.status}`)
+  }
+
+  return response.text()
 }
 
 export async function importNovelBackup<TBackup = unknown>(payload: unknown): Promise<TBackup> {

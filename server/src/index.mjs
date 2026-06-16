@@ -4,6 +4,7 @@ import {
   confirmCsvImport,
   createNovel,
   deleteNovel,
+  exportNovelsCsv,
   getNovelById,
   importNovelBackup,
   listNovels,
@@ -31,6 +32,19 @@ function sendNoContent(res) {
     'Access-Control-Allow-Headers': 'Content-Type',
   })
   res.end()
+}
+
+function sendCsv(res, csv) {
+  const today = new Date().toISOString().slice(0, 10)
+
+  res.writeHead(200, {
+    'Access-Control-Allow-Origin': '*',
+    'Access-Control-Allow-Methods': 'GET,POST,PUT,DELETE,OPTIONS',
+    'Access-Control-Allow-Headers': 'Content-Type',
+    'Content-Disposition': `attachment; filename="novel-export-${today}.csv"`,
+    'Content-Type': 'text/csv; charset=utf-8',
+  })
+  res.end(`\uFEFF${csv}`)
 }
 
 function parseNovelId(pathname) {
@@ -82,6 +96,11 @@ const server = http.createServer(async (req, res) => {
         count: novels.length,
         novels,
       })
+      return
+    }
+
+    if (req.method === 'GET' && url.pathname === '/api/backup/export.csv') {
+      sendCsv(res, exportNovelsCsv(db))
       return
     }
 

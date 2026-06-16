@@ -27,6 +27,7 @@ import {
 } from 'lucide-react'
 import {
   confirmCsvImport,
+  exportNovelCsv,
   createNovel,
   deleteNovel,
   exportNovelBackup,
@@ -2274,6 +2275,7 @@ function StatsSecondaryPanel({
 
 function BackupView({ novels, onReloadNovels }: { novels: Novel[]; onReloadNovels: () => Promise<Novel[]> }) {
   const [exporting, setExporting] = useState(false)
+  const [exportingCsv, setExportingCsv] = useState(false)
   const [exportError, setExportError] = useState<string | null>(null)
   const [importing, setImporting] = useState(false)
   const [importError, setImportError] = useState<string | null>(null)
@@ -2319,6 +2321,31 @@ function BackupView({ novels, onReloadNovels }: { novels: Novel[]; onReloadNovel
       setExportError(error instanceof Error ? error.message : '导出失败，请确认后端服务已启动')
     } finally {
       setExporting(false)
+    }
+  }
+
+  const handleExportCsv = async () => {
+    setExportingCsv(true)
+    setExportError(null)
+
+    try {
+      const csv = await exportNovelCsv()
+      const today = new Date().toISOString().slice(0, 10)
+      const csvWithBom = csv.startsWith('\uFEFF') ? csv : `\uFEFF${csv}`
+      const blob = new Blob([csvWithBom], { type: 'text/csv;charset=utf-8' })
+      const url = URL.createObjectURL(blob)
+      const link = document.createElement('a')
+
+      link.href = url
+      link.download = `novel-export-${today}.csv`
+      document.body.append(link)
+      link.click()
+      link.remove()
+      URL.revokeObjectURL(url)
+    } catch (error) {
+      setExportError(error instanceof Error ? error.message : 'CSV 导出失败，请确认后端服务已启动')
+    } finally {
+      setExportingCsv(false)
     }
   }
 
@@ -2450,6 +2477,9 @@ function BackupView({ novels, onReloadNovels }: { novels: Novel[]; onReloadNovel
           <div className="backup-buttons">
             <button disabled={exporting} onClick={handleExportJson} type="button">
               {exporting ? '导出中' : '导出 JSON'}
+            </button>
+            <button disabled={exportingCsv} onClick={handleExportCsv} type="button">
+              {exportingCsv ? '导出中' : '导出 CSV'}
             </button>
           </div>
           {exportError && <p role="alert">{exportError}</p>}
