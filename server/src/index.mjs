@@ -1,6 +1,15 @@
 import http from 'node:http'
 import { openDatabase } from './db.mjs'
-import { createNovel, deleteNovel, getNovelById, importNovelBackup, listNovels, updateNovel } from './novelRepository.mjs'
+import {
+  confirmCsvImport,
+  createNovel,
+  deleteNovel,
+  getNovelById,
+  importNovelBackup,
+  listNovels,
+  previewCsvImport,
+  updateNovel,
+} from './novelRepository.mjs'
 
 const HOST = process.env.HOST ?? '127.0.0.1'
 const PORT = Number.parseInt(process.env.PORT ?? '3001', 10)
@@ -78,6 +87,16 @@ const server = http.createServer(async (req, res) => {
 
     if (req.method === 'POST' && url.pathname === '/api/backup/import') {
       sendJson(res, 200, importNovelBackup(db, await readJsonBody(req)))
+      return
+    }
+
+    if (req.method === 'POST' && url.pathname === '/api/import/csv/preview') {
+      sendJson(res, 200, previewCsvImport(db, await readJsonBody(req)))
+      return
+    }
+
+    if (req.method === 'POST' && url.pathname === '/api/import/csv/confirm') {
+      sendJson(res, 200, confirmCsvImport(db, await readJsonBody(req)))
       return
     }
 

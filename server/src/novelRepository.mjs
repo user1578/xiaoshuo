@@ -7,6 +7,20 @@ const RATINGS = new Set(['喜欢', '一般', '不喜欢', '未评价'])
 const CHARACTER_ATTRIBUTES = new Set(['1', '0', '0.5', '其他'])
 
 const DEFAULT_COVER = 'book'
+const REQUIRED_CSV_HEADERS = [
+  '书名',
+  '作者',
+  '主角1',
+  '主角1属性',
+  '主角2',
+  '主角2属性',
+  'CP类别',
+  '结局',
+  '阅读状态',
+  '个人评价',
+  '阅读次数',
+]
+const OPTIONAL_CSV_HEADERS = ['标签', '备注']
 
 function normalizeEnding(value) {
   if (ENDINGS.has(value)) return value
@@ -217,6 +231,204 @@ function validateImportPayload(input) {
   return input.novels.map((novel, index) => validateImportNovel(novel, index))
 }
 
+function parseCsv(text) {
+  const rows = []
+  let row = []
+  let value = ''
+  let inQuotes = false
+  const source = String(text ?? '').replace(/^\uFEFF/, '')
+
+  for (let index = 0; index < source.length; index += 1) {
+    const character = source[index]
+    const nextCharacter = source[index + 1]
+
+    if (character === '"') {
+      if (inQuotes && nextCharacter === '"') {
+        value += '"'
+        index += 1
+      } else {
+        inQuotes = !inQuotes
+      }
+      continue
+    }
+
+    if (character === ',' && !inQuotes) {
+      row.push(value)
+      value = ''
+      continue
+    }
+
+    if ((character === '\n' || character === '\r') && !inQuotes) {
+      if (character === '\r' && nextCharacter === '\n') index += 1
+      row.push(value)
+      if (row.some((cell) => cell.trim() !== '')) rows.push(row)
+      row = []
+      value = ''
+      continue
+    }
+
+    value += character
+  }
+
+  row.push(value)
+  if (row.some((cell) => cell.trim() !== '')) rows.push(row)
+
+  return rows
+}
+
+function normalizeDuplicateText(value, { stripBookMarks = false } = {}) {
+  const halfWidthText = Array.from(String(value ?? '').trim(), (character) => {
+    const codePoint = character.charCodeAt(0)
+    if (codePoint === 0x3000) return ' '
+    if (codePoint >= 0xff01 && codePoint <= 0xff5e) return String.fromCharCode(codePoint - 0xfee0)
+    return character
+  }).join('')
+  const text = stripBookMarks ? halfWidthText.replace(/[《》]/g, '') : halfWidthText
+
+  return text.replace(/[\s\u00a0]+/g, '').toLowerCase()
+}
+
+function duplicateKey(title, author) {
+  return `${normalizeDuplicateText(title, { stripBookMarks: true })}::${normalizeDuplicateText(author)}`
+}
+
+function csvCell(record, header) {
+  return String(record[header] ?? '').trim()
+}
+
+function parseCsvTags(value) {
+  if (!value.trim()) return []
+  return [...new Set(value.split(/[，,]/).map((tag) => tag.trim()).filter(Boolean))]
+}
+
+function normalizeCsvOptionalEnum(value, allowedValues, defaultValue, fieldName, errors) {
+  if (!value) return defaultValue
+  if (allowedValues.has(value)) return value
+  errors.push(`${fieldName} 只能是 ${Array.from(allowedValues).join(' / ')}`)
+  return value
+}
+
+function mapCsvRecord(record, rowNumber) {
+  const errors = []
+  const title = csvCell(record, '书名')
+  const author = csvCell(record, '作者')
+
+  if (!title) errors.push('书名不能为空')
+  if (!author) errors.push('作者不能为空')
+
+  const characters = [
+    { name: csvCell(record, '主角1'), attribute: csvCell(record, '主角1属性') },
+    { name: csvCell(record, '主角2'), attribute: csvCell(record, '主角2属性') },
+  ]
+    .filter((character) => character.name)
+    .map((character, index) => ({
+      name: character.name,
+      attribute: normalizeCsvOptionalEnum(
+        character.attribute,
+        CHARACTER_ATTRIBUTES,
+        '其他',
+        `主角${index + 1}属性`,
+        errors,
+      ),
+    }))
+
+  if (characters.length === 0) errors.push('至少需要填写一个主角')
+
+  const readCountText = csvCell(record, '阅读次数')
+  const readCount = readCountText ? Number(readCountText) : 1
+  if (!Number.isInteger(readCount) || readCount < 0) errors.push('阅读次数必须是非负整数')
+
+  const now = new Date().toISOString().slice(0, 10)
+  const novel = {
+    title,
+    author,
+    characters,
+    cpCategory: normalizeCsvOptionalEnum(csvCell(record, 'CP类别'), CP_CATEGORIES, '1v1', 'CP类别', errors),
+    ending: normalizeCsvOptionalEnum(csvCell(record, '结局'), ENDINGS, '其他', '结局', errors),
+    status: normalizeCsvOptionalEnum(csvCell(record, '阅读状态'), STATUSES, '看完', '阅读状态', errors),
+    rating: normalizeCsvOptionalEnum(csvCell(record, '个人评价'), RATINGS, '未评价', '个人评价', errors),
+    readCount: Number.isInteger(readCount) && readCount >= 0 ? readCount : 1,
+    tags: parseCsvTags(csvCell(record, '标签')),
+    notes: csvCell(record, '备注'),
+    cover: DEFAULT_COVER,
+    favorite: 0,
+    createdAt: now,
+    updatedAt: now,
+  }
+
+  return {
+    rowNumber,
+    novel,
+    errors,
+  }
+}
+
+function readCsvInput(input) {
+  const csv = typeof input === 'string' ? input : input?.csv
+  if (typeof csv !== 'string' || csv.trim() === '') {
+    throw Object.assign(new Error('CSV content is required'), { statusCode: 400 })
+  }
+  return csv
+}
+
+function buildCsvImportPreview(db, input) {
+  const rows = parseCsv(readCsvInput(input))
+  if (rows.length === 0) {
+    throw Object.assign(new Error('CSV is empty'), { statusCode: 400 })
+  }
+
+  const headers = rows[0].map((header) => header.trim())
+  const missingHeaders = REQUIRED_CSV_HEADERS.filter((header) => !headers.includes(header))
+  const allowedHeaders = new Set([...REQUIRED_CSV_HEADERS, ...OPTIONAL_CSV_HEADERS])
+  const unsupportedHeaders = headers.filter((header) => header && !allowedHeaders.has(header))
+
+  if (missingHeaders.length > 0) {
+    throw Object.assign(new Error(`CSV missing required headers: ${missingHeaders.join(', ')}`), { statusCode: 400 })
+  }
+  if (unsupportedHeaders.length > 0) {
+    throw Object.assign(new Error(`CSV has unsupported headers: ${unsupportedHeaders.join(', ')}`), { statusCode: 400 })
+  }
+
+  const existingKeys = new Set(listNovels(db).map((novel) => duplicateKey(novel.title, novel.author)))
+  const seenImportKeys = new Set()
+  const dataRows = rows.slice(1)
+
+  const previewRows = dataRows.map((cells, index) => {
+    const record = Object.fromEntries(headers.map((header, headerIndex) => [header, cells[headerIndex] ?? '']))
+    const mapped = mapCsvRecord(record, index + 2)
+    const key = duplicateKey(mapped.novel.title, mapped.novel.author)
+    const duplicateReasons = []
+
+    if (mapped.novel.title && mapped.novel.author && existingKeys.has(key)) duplicateReasons.push('数据库已存在相同书名和作者')
+    if (mapped.novel.title && mapped.novel.author && seenImportKeys.has(key)) duplicateReasons.push('CSV 中重复书名和作者')
+
+    let status = 'ready'
+    if (mapped.errors.length > 0) {
+      status = 'error'
+    } else if (duplicateReasons.length > 0) {
+      status = 'duplicate'
+    } else {
+      seenImportKeys.add(key)
+    }
+
+    return {
+      rowNumber: mapped.rowNumber,
+      status,
+      errors: mapped.errors,
+      duplicateReasons,
+      novel: mapped.novel,
+    }
+  })
+
+  return {
+    totalRows: previewRows.length,
+    importableCount: previewRows.filter((row) => row.status === 'ready').length,
+    duplicateCount: previewRows.filter((row) => row.status === 'duplicate').length,
+    errorCount: previewRows.filter((row) => row.status === 'error').length,
+    rows: previewRows,
+  }
+}
+
 function rowToNovel(db, row) {
   if (!row) return null
 
@@ -360,6 +572,27 @@ export function importNovelBackup(db, input) {
     return {
       importedAt: new Date().toISOString(),
       count: novels.length,
+      novels: listNovels(db),
+    }
+  })
+}
+
+export function previewCsvImport(db, input) {
+  return buildCsvImportPreview(db, input)
+}
+
+export function confirmCsvImport(db, input) {
+  const preview = buildCsvImportPreview(db, input)
+  const importableRows = preview.rows.filter((row) => row.status === 'ready')
+
+  return runInTransaction(db, () => {
+    importableRows.forEach((row) => insertNovelRecord(db, row.novel))
+
+    return {
+      importedAt: new Date().toISOString(),
+      importedCount: importableRows.length,
+      duplicateCount: preview.duplicateCount,
+      errorCount: preview.errorCount,
       novels: listNovels(db),
     }
   })

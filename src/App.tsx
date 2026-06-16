@@ -25,7 +25,16 @@ import {
   UserRound,
   X,
 } from 'lucide-react'
-import { createNovel, deleteNovel, exportNovelBackup, fetchNovels, importNovelBackup, updateNovel } from './api/novels'
+import {
+  confirmCsvImport,
+  createNovel,
+  deleteNovel,
+  exportNovelBackup,
+  fetchNovels,
+  importNovelBackup,
+  previewCsvImport,
+  updateNovel,
+} from './api/novels'
 import './App.css'
 
 type View =
@@ -93,6 +102,30 @@ type NovelBackup = {
 type NovelImportResult = {
   importedAt: string
   count: number
+  novels: Novel[]
+}
+
+type CsvImportPreviewRow = {
+  rowNumber: number
+  status: 'ready' | 'duplicate' | 'error'
+  errors: string[]
+  duplicateReasons: string[]
+  novel: NovelPayload
+}
+
+type CsvImportPreview = {
+  totalRows: number
+  importableCount: number
+  duplicateCount: number
+  errorCount: number
+  rows: CsvImportPreviewRow[]
+}
+
+type CsvImportResult = {
+  importedAt: string
+  importedCount: number
+  duplicateCount: number
+  errorCount: number
   novels: Novel[]
 }
 
@@ -789,6 +822,7 @@ function App() {
   const [wallPage, setWallPage] = useState(0)
   const [editingNovel, setEditingNovel] = useState<Novel | null>(mockNovels[0])
   const [aboutOpen, setAboutOpen] = useState(false)
+  const [lastRandomNovelId, setLastRandomNovelId] = useState<number | null>(null)
 
   const reloadNovels = async () => {
     const apiNovels = await fetchNovels<Novel>()
@@ -958,6 +992,17 @@ function App() {
     setSelectedNovel(null)
   }
 
+  const openRandomNovel = () => {
+    if (novels.length === 0) return
+
+    const candidates =
+      novels.length > 1 && lastRandomNovelId !== null ? novels.filter((novel) => novel.id !== lastRandomNovelId) : novels
+    const randomNovel = candidates[Math.floor(Math.random() * candidates.length)]
+
+    setLastRandomNovelId(randomNovel.id)
+    setSelectedNovel(randomNovel)
+  }
+
   return (
     <main className="novel-app">
       <DecorativeLines />
@@ -1014,6 +1059,7 @@ function App() {
                 commonTags={topTags(novels, 10)}
                 featuredNovels={featuredNovels}
                 novels={filteredNovels}
+                onOpenRandomNovel={openRandomNovel}
                 setActiveView={setActiveView}
                 setCarouselIndex={setCarouselIndex}
                 setFilters={setFilters}
@@ -1366,6 +1412,7 @@ function HomeView({
   commonTags,
   featuredNovels,
   novels,
+  onOpenRandomNovel,
   setActiveView,
   setCarouselIndex,
   setFilters,
@@ -1377,6 +1424,7 @@ function HomeView({
   commonTags: { tag: string; count: number }[]
   featuredNovels: Novel[]
   novels: Novel[]
+  onOpenRandomNovel: () => void
   setActiveView: (view: View) => void
   setCarouselIndex: (index: number) => void
   setFilters: (filters: FilterState) => void
@@ -1396,7 +1444,7 @@ function HomeView({
           <button onClick={() => setActiveView('all')} type="button">
             开始浏览
           </button>
-          <button onClick={() => setSelectedNovel(novels[2] ?? novels[0])} type="button">
+          <button onClick={onOpenRandomNovel} type="button">
             随机一本
           </button>
         </div>
@@ -2092,6 +2140,13 @@ function BackupView({ novels, onReloadNovels }: { novels: Novel[]; onReloadNovel
   const [importError, setImportError] = useState<string | null>(null)
   const [importMessage, setImportMessage] = useState<string | null>(null)
   const [selectedBackupFile, setSelectedBackupFile] = useState<File | null>(null)
+  const [selectedCsvFile, setSelectedCsvFile] = useState<File | null>(null)
+  const [csvText, setCsvText] = useState('')
+  const [csvPreview, setCsvPreview] = useState<CsvImportPreview | null>(null)
+  const [csvPreviewing, setCsvPreviewing] = useState(false)
+  const [csvImporting, setCsvImporting] = useState(false)
+  const [csvError, setCsvError] = useState<string | null>(null)
+  const [csvMessage, setCsvMessage] = useState<string | null>(null)
   const backupStats = [
     { label: '最近备份时间', value: '2026-06-10 23:18' },
     { label: '当前小说数量', value: `${novels.length} 本` },
@@ -2157,6 +2212,63 @@ function BackupView({ novels, onReloadNovels }: { novels: Novel[]; onReloadNovel
       }
     } finally {
       setImporting(false)
+    }
+  }
+
+  const handlePreviewCsv = async () => {
+    if (!selectedCsvFile) {
+      setCsvError('请先选择 CSV 文件')
+      return
+    }
+
+    setCsvPreviewing(true)
+    setCsvError(null)
+    setCsvMessage(null)
+
+    try {
+      const nextCsvText = await selectedCsvFile.text()
+      const preview = await previewCsvImport<CsvImportPreview>(nextCsvText)
+
+      setCsvText(nextCsvText)
+      setCsvPreview(preview)
+    } catch (error) {
+      setCsvPreview(null)
+      setCsvText('')
+      setCsvError(error instanceof Error ? error.message : 'CSV 预览失败，请确认文件格式')
+    } finally {
+      setCsvPreviewing(false)
+    }
+  }
+
+  const handleConfirmCsvImport = async () => {
+    if (!csvPreview || !csvText) {
+      setCsvError('请先预览校验 CSV')
+      return
+    }
+    if (csvPreview.importableCount === 0) {
+      setCsvError('没有可导入的 CSV 行')
+      return
+    }
+
+    const confirmed = window.confirm(`确认导入 ${csvPreview.importableCount} 本小说吗？重复和错误行会跳过。`)
+    if (!confirmed) return
+
+    setCsvImporting(true)
+    setCsvError(null)
+    setCsvMessage(null)
+
+    try {
+      const result = await confirmCsvImport<CsvImportResult>(csvText)
+
+      await onReloadNovels()
+      setCsvMessage(`CSV 导入成功，共新增 ${result.importedCount} 本小说`)
+      setCsvPreview(null)
+      setCsvText('')
+      setSelectedCsvFile(null)
+    } catch (error) {
+      setCsvError(error instanceof Error ? error.message : 'CSV 导入失败，请确认后端服务已启动')
+    } finally {
+      setCsvImporting(false)
     }
   }
 
@@ -2231,6 +2343,55 @@ function BackupView({ novels, onReloadNovels }: { novels: Novel[]; onReloadNovel
           {selectedBackupFile && <p>已选择：{selectedBackupFile.name}</p>}
           {importMessage && <p role="status">{importMessage}</p>}
           {importError && <p role="alert">{importError}</p>}
+        </article>
+
+        <article className="backup-card import-card">
+          <h3>导入 CSV</h3>
+          <p>选择按固定表头整理的 CSV，先预览校验，确认后写入 SQLite。</p>
+          <label className="tag-input">
+            <input
+              accept=".csv,text/csv"
+              onChange={(event) => {
+                setSelectedCsvFile(event.target.files?.[0] ?? null)
+                setCsvPreview(null)
+                setCsvText('')
+                setCsvError(null)
+                setCsvMessage(null)
+              }}
+              type="file"
+            />
+          </label>
+          <div className="backup-buttons">
+            <button disabled={csvPreviewing || !selectedCsvFile} onClick={handlePreviewCsv} type="button">
+              {csvPreviewing ? '校验中' : '预览校验'}
+            </button>
+            <button disabled={csvImporting || !csvPreview || csvPreview.importableCount === 0} onClick={handleConfirmCsvImport} type="button">
+              {csvImporting ? '导入中' : '确认导入 CSV'}
+            </button>
+          </div>
+          {selectedCsvFile && <p>已选择：{selectedCsvFile.name}</p>}
+          {csvPreview && (
+            <div>
+              <p>
+                总行数 {csvPreview.totalRows} / 可导入 {csvPreview.importableCount} / 重复 {csvPreview.duplicateCount} / 错误 {csvPreview.errorCount}
+              </p>
+              <ol className="backup-records">
+                {csvPreview.rows.slice(0, 20).map((row) => (
+                  <li key={`${row.rowNumber}-${row.novel.title}-${row.status}`}>
+                    <time>第 {row.rowNumber} 行</time>
+                    <strong>{row.novel.title || '未填写书名'}</strong>
+                    <span>
+                      {row.status === 'ready' && '可导入'}
+                      {row.status === 'duplicate' && `重复：${row.duplicateReasons.join('；')}`}
+                      {row.status === 'error' && `错误：${row.errors.join('；')}`}
+                    </span>
+                  </li>
+                ))}
+              </ol>
+            </div>
+          )}
+          {csvMessage && <p role="status">{csvMessage}</p>}
+          {csvError && <p role="alert">{csvError}</p>}
         </article>
       </div>
 

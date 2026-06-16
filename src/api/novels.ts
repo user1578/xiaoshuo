@@ -1,6 +1,8 @@
 const NOVELS_API_URL = 'http://127.0.0.1:3001/api/novels'
 const BACKUP_EXPORT_API_URL = 'http://127.0.0.1:3001/api/backup/export'
 const BACKUP_IMPORT_API_URL = 'http://127.0.0.1:3001/api/backup/import'
+const CSV_IMPORT_PREVIEW_API_URL = 'http://127.0.0.1:3001/api/import/csv/preview'
+const CSV_IMPORT_CONFIRM_API_URL = 'http://127.0.0.1:3001/api/import/csv/confirm'
 
 export async function fetchNovels<TNovel = unknown>(): Promise<TNovel[]> {
   const response = await fetch(NOVELS_API_URL)
@@ -79,4 +81,29 @@ export async function importNovelBackup<TBackup = unknown>(payload: unknown): Pr
   }
 
   return response.json() as Promise<TBackup>
+}
+
+async function postCsvImport<TResponse>(url: string, csv: string): Promise<TResponse> {
+  const response = await fetch(url, {
+    body: JSON.stringify({ csv }),
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    method: 'POST',
+  })
+
+  if (!response.ok) {
+    const data = (await response.json().catch(() => null)) as { error?: string } | null
+    throw new Error(data?.error ?? `CSV import request failed: ${response.status}`)
+  }
+
+  return response.json() as Promise<TResponse>
+}
+
+export async function previewCsvImport<TPreview = unknown>(csv: string): Promise<TPreview> {
+  return postCsvImport<TPreview>(CSV_IMPORT_PREVIEW_API_URL, csv)
+}
+
+export async function confirmCsvImport<TImport = unknown>(csv: string): Promise<TImport> {
+  return postCsvImport<TImport>(CSV_IMPORT_CONFIRM_API_URL, csv)
 }
