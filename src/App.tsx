@@ -992,6 +992,29 @@ function App() {
     setSelectedNovel(null)
   }
 
+  const handleBulkDeleteNovels = async (ids: number[]) => {
+    const deleteResults = await Promise.all(
+      ids.map(async (id) => {
+        try {
+          await deleteNovel(id, { ignoreNotFound: true })
+          return null
+        } catch (deleteError) {
+          return deleteError
+        }
+      }),
+    )
+    const deleteErrors = deleteResults.filter((deleteError) => deleteError !== null)
+    const apiNovels = await fetchNovels<Novel>()
+
+    setNovels(apiNovels)
+    setError(null)
+    setSelectedNovel(null)
+
+    if (deleteErrors.length > 0) {
+      throw new Error(`批量删除完成，${deleteErrors.length} 本删除失败，请确认后端服务状态`)
+    }
+  }
+
   const openRandomNovel = () => {
     if (novels.length === 0) return
 
@@ -1073,8 +1096,10 @@ function App() {
 
             {isLibraryView(activeView) && (
               <LibraryView
+                bulkDeleteEnabled={activeView === 'all'}
                 carouselIndex={carouselIndex}
                 novels={visibleNovels}
+                onBulkDeleteNovels={handleBulkDeleteNovels}
                 setCarouselIndex={setCarouselIndex}
                 setSelectedNovel={setSelectedNovel}
                 setWallPage={setWallPage}
@@ -1604,33 +1629,41 @@ function RecentTimelineView({
 }
 
 function LibraryView({
+  bulkDeleteEnabled = false,
   carouselIndex,
   novels,
+  onBulkDeleteNovels,
   setCarouselIndex,
   setSelectedNovel,
   setWallPage,
   title,
   wallPage,
 }: {
+  bulkDeleteEnabled?: boolean
   carouselIndex: number
   novels: Novel[]
+  onBulkDeleteNovels?: (ids: number[]) => Promise<void>
   setCarouselIndex: (index: number) => void
   setSelectedNovel: (novel: Novel) => void
   setWallPage: (page: number) => void
   title: string
   wallPage: number
 }) {
+  const carouselNovels = novels.slice(0, 10)
+
   return (
     <>
       <SpotlightCarousel
-        index={Math.min(carouselIndex, Math.max(0, novels.length - 1))}
-        novels={novels}
+        index={Math.min(carouselIndex, Math.max(0, carouselNovels.length - 1))}
+        novels={carouselNovels}
         setIndex={setCarouselIndex}
         setSelectedNovel={setSelectedNovel}
         title={title}
       />
       <NovelWall
+        bulkDeleteEnabled={bulkDeleteEnabled}
         novels={novels}
+        onBulkDeleteNovels={onBulkDeleteNovels}
         page={wallPage}
         setPage={setWallPage}
         setSelectedNovel={setSelectedNovel}
@@ -1817,25 +1850,93 @@ function SpotlightCard({
 }
 
 function NovelWall({
+  bulkDeleteEnabled = false,
   novels,
+  onBulkDeleteNovels,
   page,
   setPage,
   setSelectedNovel,
   title,
 }: {
+  bulkDeleteEnabled?: boolean
   novels: Novel[]
+  onBulkDeleteNovels?: (ids: number[]) => Promise<void>
   page: number
   setPage: (page: number) => void
   setSelectedNovel: (novel: Novel) => void
   title: string
 }) {
+  const [bulkManageMode, setBulkManageMode] = useState(false)
+  const [selectedNovelIds, setSelectedNovelIds] = useState<Set<number>>(() => new Set())
+  const [bulkDeleting, setBulkDeleting] = useState(false)
+  const [bulkDeleteError, setBulkDeleteError] = useState<string | null>(null)
   const pageSize = 6
   const pageCount = Math.max(1, Math.ceil(novels.length / pageSize))
   const safePage = Math.min(page, pageCount - 1)
   const pageNovels = novels.slice(safePage * pageSize, safePage * pageSize + pageSize)
+  const activeSelectedNovelIds = useMemo(() => {
+    const availableIds = new Set(novels.map((novel) => novel.id))
+    return new Set([...selectedNovelIds].filter((id) => availableIds.has(id)))
+  }, [novels, selectedNovelIds])
+  const selectedCount = activeSelectedNovelIds.size
+  const allCurrentNovelsSelected = novels.length > 0 && selectedCount === novels.length
 
   const go = (direction: -1 | 1) => {
     setPage((safePage + direction + pageCount) % pageCount)
+  }
+
+  const toggleNovelSelection = (id: number) => {
+    setBulkDeleteError(null)
+    setSelectedNovelIds((currentSelectedIds) => {
+      const nextSelectedIds = new Set(currentSelectedIds)
+
+      if (nextSelectedIds.has(id)) {
+        nextSelectedIds.delete(id)
+      } else {
+        nextSelectedIds.add(id)
+      }
+
+      return nextSelectedIds
+    })
+  }
+
+  const clearSelection = () => {
+    setSelectedNovelIds(new Set())
+    setBulkDeleteError(null)
+  }
+
+  const enterBulkManageMode = () => {
+    setBulkManageMode(true)
+    setBulkDeleteError(null)
+  }
+
+  const exitBulkManageMode = () => {
+    setBulkManageMode(false)
+    clearSelection()
+  }
+
+  const toggleAllCurrentNovels = () => {
+    setBulkDeleteError(null)
+    setSelectedNovelIds(allCurrentNovelsSelected ? new Set() : new Set(novels.map((novel) => novel.id)))
+  }
+
+  const handleBulkDelete = async () => {
+    if (!onBulkDeleteNovels || selectedCount === 0) return
+
+    const confirmed = window.confirm(`确定删除选中的 ${selectedCount} 本小说吗？此操作不可恢复，建议先导出 JSON 备份。`)
+    if (!confirmed) return
+
+    setBulkDeleting(true)
+    setBulkDeleteError(null)
+
+    try {
+      await onBulkDeleteNovels([...activeSelectedNovelIds])
+      exitBulkManageMode()
+    } catch (bulkDeleteFailure) {
+      setBulkDeleteError(bulkDeleteFailure instanceof Error ? bulkDeleteFailure.message : '批量删除失败，请确认后端服务状态')
+    } finally {
+      setBulkDeleting(false)
+    }
   }
 
   if (novels.length === 0) {
@@ -1850,6 +1951,11 @@ function NovelWall({
           <h2>{title}</h2>
         </div>
         <div className="wall-controls">
+          {bulkDeleteEnabled && !bulkManageMode && (
+            <button className="bulk-manage-button" onClick={enterBulkManageMode} type="button">
+              批量管理
+            </button>
+          )}
           <button onClick={() => go(-1)} type="button" aria-label="上一页">
             <ChevronLeft size={19} />
           </button>
@@ -1858,12 +1964,33 @@ function NovelWall({
           </button>
         </div>
       </div>
+      {bulkDeleteEnabled && bulkManageMode && (
+        <div className="bulk-delete-bar">
+          <span>已选择 {selectedCount} 本</span>
+          <div>
+            <button disabled={bulkDeleting || novels.length === 0} onClick={toggleAllCurrentNovels} type="button">
+              {allCurrentNovelsSelected ? '取消全选' : '全选当前列表'}
+            </button>
+            <button className="delete-button" disabled={selectedCount === 0 || bulkDeleting} onClick={handleBulkDelete} type="button">
+              <Trash2 size={16} />
+              {bulkDeleting ? '删除中' : '批量删除'}
+            </button>
+            <button className="exit-manage-button" disabled={bulkDeleting} onClick={exitBulkManageMode} type="button">
+              退出管理
+            </button>
+          </div>
+          {bulkDeleteError && <p role="alert">{bulkDeleteError}</p>}
+        </div>
+      )}
       <div className="wall-grid">
         {pageNovels.map((novel) => (
           <WallCard
+            bulkSelectEnabled={bulkDeleteEnabled && bulkManageMode}
+            checked={activeSelectedNovelIds.has(novel.id)}
             key={novel.id}
             novel={novel}
             onOpen={() => setSelectedNovel(novel)}
+            onToggleSelect={() => toggleNovelSelection(novel.id)}
           />
         ))}
       </div>
@@ -1883,14 +2010,26 @@ function NovelWall({
 }
 
 function WallCard({
+  bulkSelectEnabled = false,
+  checked = false,
   novel,
   onOpen,
+  onToggleSelect,
 }: {
+  bulkSelectEnabled?: boolean
+  checked?: boolean
   novel: Novel
   onOpen: () => void
+  onToggleSelect?: () => void
 }) {
   return (
-    <article className="wall-card">
+    <article className={`wall-card${checked ? ' selected' : ''}`}>
+      {bulkSelectEnabled && (
+        <label className="wall-select" onClick={(event) => event.stopPropagation()}>
+          <input checked={checked} onChange={onToggleSelect} type="checkbox" />
+          <span>选择</span>
+        </label>
+      )}
       <CoverArt cover={novel.cover} size="wall" />
       <div className="wall-info">
         <h3>{novel.title}</h3>
