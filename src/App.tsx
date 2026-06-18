@@ -36,6 +36,12 @@ import {
   previewCsvImport,
   updateNovel,
 } from './api/novels'
+import {
+  getSupabaseSession,
+  isSupabaseDataSource,
+  signInToSupabase,
+  signOutFromSupabase,
+} from './api/supabaseClient'
 import './App.css'
 
 type View =
@@ -75,6 +81,7 @@ type CoverStyle =
   | 'line'
 
 const availableCovers: CoverStyle[] = ['portrait', 'apple', 'cat', 'book', 'flower', 'moon', 'cloud', 'line']
+const cloudMode = isSupabaseDataSource()
 
 type Novel = {
   id: number
@@ -828,6 +835,11 @@ function App() {
   const [novels, setNovels] = useState<Novel[]>(mockNovels)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [cloudSignedIn, setCloudSignedIn] = useState(!cloudMode)
+  const [cloudEmail, setCloudEmail] = useState('')
+  const [cloudPassword, setCloudPassword] = useState('')
+  const [cloudAuthLoading, setCloudAuthLoading] = useState(cloudMode)
+  const [cloudAuthError, setCloudAuthError] = useState<string | null>(null)
   const [activeView, setActiveView] = useState<View>('home')
   const [query, setQuery] = useState('')
   const [filters, setFilters] = useState<FilterState>(emptyFilters)
@@ -849,6 +861,45 @@ function App() {
 
   useEffect(() => {
     let ignore = false
+
+    if (cloudMode) {
+      getSupabaseSession()
+        .then(async (session) => {
+          if (ignore) return null
+
+          const signedIn = Boolean(session)
+          setCloudSignedIn(signedIn)
+          setCloudAuthError(null)
+
+          if (!signedIn) {
+            setNovels([])
+            setError(null)
+            return null
+          }
+
+          return fetchNovels<Novel>()
+        })
+        .then((apiNovels) => {
+          if (ignore || !apiNovels) return
+          setNovels(apiNovels)
+          setError(null)
+        })
+        .catch((fetchError: unknown) => {
+          if (ignore) return
+          setNovels([])
+          setError(fetchError instanceof Error ? fetchError.message : '无法读取 Supabase 小说数据')
+        })
+        .finally(() => {
+          if (!ignore) {
+            setCloudAuthLoading(false)
+            setLoading(false)
+          }
+        })
+
+      return () => {
+        ignore = true
+      }
+    }
 
     fetchNovels<Novel>()
       .then((apiNovels) => {
@@ -990,6 +1041,10 @@ function App() {
   }
 
   const handleCreateNovel = async (payload: NovelPayload) => {
+    if (cloudMode) {
+      throw new Error('云端模式暂未开放写入')
+    }
+
     const createdNovel = await createNovel<Novel>(payload)
     const apiNovels = await fetchNovels<Novel>()
 
@@ -1000,6 +1055,10 @@ function App() {
   }
 
   const handleUpdateNovel = async (id: number, payload: NovelPayload) => {
+    if (cloudMode) {
+      throw new Error('云端模式暂未开放写入')
+    }
+
     const updatedNovel = await updateNovel<Novel>(id, payload)
     const apiNovels = await fetchNovels<Novel>()
 
@@ -1010,6 +1069,10 @@ function App() {
   }
 
   const handleDeleteNovel = async (id: number) => {
+    if (cloudMode) {
+      throw new Error('云端模式暂未开放写入')
+    }
+
     await deleteNovel(id)
     const apiNovels = await fetchNovels<Novel>()
 
@@ -1019,6 +1082,10 @@ function App() {
   }
 
   const handleBulkDeleteNovels = async (ids: number[]) => {
+    if (cloudMode) {
+      throw new Error('云端模式暂未开放写入')
+    }
+
     const deleteResults = await Promise.all(
       ids.map(async (id) => {
         try {
@@ -1052,6 +1119,58 @@ function App() {
     setSelectedNovel(randomNovel)
   }
 
+  const handleCloudLogin = async () => {
+    setCloudAuthLoading(true)
+    setCloudAuthError(null)
+
+    try {
+      await signInToSupabase(cloudEmail, cloudPassword)
+      setCloudSignedIn(true)
+      setLoading(true)
+      await reloadNovels()
+      setActiveView('home')
+      setCloudPassword('')
+    } catch (loginError) {
+      setCloudAuthError(loginError instanceof Error ? loginError.message : 'Supabase 登录失败')
+      setCloudSignedIn(false)
+      setNovels([])
+    } finally {
+      setCloudAuthLoading(false)
+      setLoading(false)
+    }
+  }
+
+  const handleCloudLogout = async () => {
+    setCloudAuthLoading(true)
+    setCloudAuthError(null)
+
+    try {
+      await signOutFromSupabase()
+      setCloudSignedIn(false)
+      setNovels([])
+      setSelectedNovel(null)
+      setActiveView('home')
+    } catch (logoutError) {
+      setCloudAuthError(logoutError instanceof Error ? logoutError.message : 'Supabase 退出登录失败')
+    } finally {
+      setCloudAuthLoading(false)
+    }
+  }
+
+  if (cloudMode && !cloudAuthLoading && !cloudSignedIn) {
+    return (
+      <CloudLoginView
+        email={cloudEmail}
+        error={cloudAuthError}
+        onEmailChange={setCloudEmail}
+        onPasswordChange={setCloudPassword}
+        onSubmit={handleCloudLogin}
+        password={cloudPassword}
+        submitting={cloudAuthLoading}
+      />
+    )
+  }
+
   return (
     <main className="novel-app">
       <DecorativeLines />
@@ -1067,6 +1186,11 @@ function App() {
           </span>
         </button>
         <p className="top-note">今天也记录一点喜欢的故事吧</p>
+        {cloudMode && cloudSignedIn && (
+          <button className="cloud-session-button" disabled={cloudAuthLoading} onClick={handleCloudLogout} type="button">
+            退出登录
+          </button>
+        )}
       </header>
 
       <div className="layout-grid">
@@ -1202,6 +1326,70 @@ function App() {
         />
       )}
       {aboutOpen && <AboutModal onClose={() => setAboutOpen(false)} />}
+    </main>
+  )
+}
+
+function CloudLoginView({
+  email,
+  error,
+  onEmailChange,
+  onPasswordChange,
+  onSubmit,
+  password,
+  submitting,
+}: {
+  email: string
+  error: string | null
+  onEmailChange: (value: string) => void
+  onPasswordChange: (value: string) => void
+  onSubmit: () => Promise<void>
+  password: string
+  submitting: boolean
+}) {
+  return (
+    <main className="novel-app">
+      <DecorativeLines />
+      <section className="cloud-login-panel">
+        <div className="section-head">
+          <div>
+            <UserRound size={18} />
+            <h2>Supabase Login</h2>
+          </div>
+        </div>
+        <form
+          className="cloud-login-form"
+          onSubmit={(event) => {
+            event.preventDefault()
+            void onSubmit()
+          }}
+        >
+          <label className="field">
+            <span>Email</span>
+            <input
+              autoComplete="email"
+              onChange={(event) => onEmailChange(event.target.value)}
+              type="email"
+              value={email}
+            />
+          </label>
+          <label className="field">
+            <span>Password</span>
+            <input
+              autoComplete="current-password"
+              onChange={(event) => onPasswordChange(event.target.value)}
+              type="password"
+              value={password}
+            />
+          </label>
+          {error && <p role="alert">{error}</p>}
+          <div className="form-actions">
+            <button className="save-action" disabled={submitting} type="submit">
+              {submitting ? 'Signing in' : 'Sign in'}
+            </button>
+          </div>
+        </form>
+      </section>
     </main>
   )
 }
