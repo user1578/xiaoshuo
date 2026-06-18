@@ -92,6 +92,19 @@ function normalizeName(value: string) {
   return value.trim()
 }
 
+async function getCurrentSupabaseUserId(action: string) {
+  const { data: userData, error: userError } = await supabase.auth.getUser()
+  assertSupabaseError(`Failed to get current Supabase user for ${action}`, userError)
+
+  const userId = userData.user?.id
+
+  if (!userId) {
+    throw new Error(`Failed to ${action}: user is not signed in`)
+  }
+
+  return userId
+}
+
 async function fetchSupabaseNovelById<TNovel = unknown>(id: number): Promise<TNovel> {
   const { data, error } = await supabase
     .from('novels')
@@ -160,14 +173,7 @@ export async function fetchSupabaseNovels<TNovel = unknown>(): Promise<TNovel[]>
 }
 
 export async function createSupabaseNovel<TNovel = unknown>(payload: SupabaseNovelPayload): Promise<TNovel> {
-  const { data: userData, error: userError } = await supabase.auth.getUser()
-  assertSupabaseError('Failed to get current Supabase user', userError)
-
-  const userId = userData.user?.id
-
-  if (!userId) {
-    throw new Error('Failed to create Supabase novel: user is not signed in')
-  }
+  const userId = await getCurrentSupabaseUserId('create Supabase novel')
 
   const authorName = normalizeName(payload.author)
 
@@ -250,4 +256,99 @@ export async function createSupabaseNovel<TNovel = unknown>(payload: SupabaseNov
   }
 
   return fetchSupabaseNovelById<TNovel>(novel.id)
+}
+
+export async function updateSupabaseNovel<TNovel = unknown>(
+  id: number,
+  payload: SupabaseNovelPayload,
+): Promise<TNovel> {
+  const userId = await getCurrentSupabaseUserId('update Supabase novel')
+  const authorName = normalizeName(payload.author)
+
+  if (!authorName) {
+    throw new Error('Failed to update Supabase novel: author is required')
+  }
+
+  const { data: author, error: authorError } = await supabase
+    .from('authors')
+    .upsert({ name: authorName, user_id: userId }, { onConflict: 'user_id,name' })
+    .select('id')
+    .single<{ id: number }>()
+  assertSupabaseError('Failed to upsert Supabase author for update', authorError)
+
+  if (!author) {
+    throw new Error('Failed to upsert Supabase author for update: no row returned')
+  }
+
+  const { data: novel, error: novelError } = await supabase
+    .from('novels')
+    .update({
+      author_id: author.id,
+      cover: payload.cover,
+      cp_category: payload.cpCategory,
+      created_at: payload.createdAt,
+      ending: payload.ending,
+      favorite: payload.favorite,
+      notes: payload.notes,
+      rating: payload.rating,
+      read_count: payload.readCount,
+      status: payload.status,
+      title: payload.title,
+      updated_at: payload.updatedAt,
+    })
+    .eq('id', id)
+    .eq('user_id', userId)
+    .select('id')
+    .single<{ id: number }>()
+  assertSupabaseError('Failed to update Supabase novel', novelError)
+
+  if (!novel) {
+    throw new Error('Failed to update Supabase novel: no row returned')
+  }
+
+  const { error: deleteCharactersError } = await supabase.from('characters').delete().eq('novel_id', id)
+  assertSupabaseError('Failed to delete existing Supabase characters', deleteCharactersError)
+
+  const characterRows = payload.characters
+    .map((character, index) => ({
+      attribute: character.attribute,
+      name: normalizeName(character.name),
+      novel_id: id,
+      sort_order: index,
+    }))
+    .filter((character) => character.name.length > 0)
+
+  if (characterRows.length > 0) {
+    const { error: charactersError } = await supabase.from('characters').insert(characterRows)
+    assertSupabaseError('Failed to insert updated Supabase characters', charactersError)
+  }
+
+  const { error: deleteNovelTagsError } = await supabase.from('novel_tags').delete().eq('novel_id', id)
+  assertSupabaseError('Failed to delete existing Supabase novel tags', deleteNovelTagsError)
+
+  const tagNames = Array.from(new Set(payload.tags.map(normalizeName).filter(Boolean)))
+
+  if (tagNames.length > 0) {
+    const { data: tags, error: tagsError } = await supabase
+      .from('tags')
+      .upsert(
+        tagNames.map((name) => ({ name, user_id: userId })),
+        { onConflict: 'user_id,name' },
+      )
+      .select('id')
+      .returns<{ id: number }[]>()
+    assertSupabaseError('Failed to upsert Supabase tags for update', tagsError)
+
+    const tagLinks = (tags ?? []).map((tag) => ({
+      novel_id: id,
+      tag_id: tag.id,
+    }))
+
+    if (tagLinks.length > 0) {
+      const { error: novelTagsError } = await supabase.from('novel_tags').insert(tagLinks)
+      assertSupabaseError('Failed to insert updated Supabase novel tags', novelTagsError)
+    }
+  }
+
+  return fetchSupabaseNovelById<TNovel>(id)
 }

@@ -1051,10 +1051,6 @@ function App() {
   }
 
   const handleUpdateNovel = async (id: number, payload: NovelPayload) => {
-    if (cloudMode) {
-      throw new Error('云端模式暂未开放写入')
-    }
-
     const updatedNovel = await updateNovel<Novel>(id, payload)
     const apiNovels = await fetchNovels<Novel>()
 
