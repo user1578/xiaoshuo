@@ -74,6 +74,8 @@ type CoverStyle =
   | 'cloud'
   | 'line'
 
+const availableCovers: CoverStyle[] = ['portrait', 'apple', 'cat', 'book', 'flower', 'moon', 'cloud', 'line']
+
 type Novel = {
   id: number
   title: string
@@ -810,6 +812,18 @@ function findDuplicateNovel(novels: Novel[], payload: NovelPayload, currentNovel
   })
 }
 
+function pickStableCover(title: string, author: string): CoverStyle {
+  const source = `${title}\u0000${author}`
+  let hash = 2166136261
+
+  for (const character of source) {
+    hash ^= character.codePointAt(0) ?? 0
+    hash = Math.imul(hash, 16777619)
+  }
+
+  return availableCovers[Math.abs(hash) % availableCovers.length] ?? 'book'
+}
+
 function App() {
   const [novels, setNovels] = useState<Novel[]>(mockNovels)
   const [loading, setLoading] = useState(true)
@@ -824,6 +838,7 @@ function App() {
   const [editingNovel, setEditingNovel] = useState<Novel | null>(mockNovels[0])
   const [aboutOpen, setAboutOpen] = useState(false)
   const [lastRandomNovelId, setLastRandomNovelId] = useState<number | null>(null)
+  const [selectedAuthor, setSelectedAuthor] = useState<{ author: string; works: Novel[] } | null>(null)
 
   const reloadNovels = async () => {
     const apiNovels = await fetchNovels<Novel>()
@@ -956,12 +971,22 @@ function App() {
       liked: works.filter(isLikedNovel).length,
       finished: works.filter(isFinishedNovel).length,
     }
-  })
+  }).sort((firstAuthor, secondAuthor) => (
+    secondAuthor.works.length - firstAuthor.works.length ||
+    firstAuthor.author.localeCompare(secondAuthor.author, 'zh-Hans-CN')
+  ))
 
   const openEdit = (novel: Novel) => {
     setEditingNovel(novel)
     setSelectedNovel(null)
     setActiveView('edit')
+  }
+
+  const changeActiveView = (view: View) => {
+    if (view === 'authors') {
+      setSelectedAuthor(null)
+    }
+    setActiveView(view)
   }
 
   const handleCreateNovel = async (payload: NovelPayload) => {
@@ -1045,7 +1070,7 @@ function App() {
       </header>
 
       <div className="layout-grid">
-        <Sidebar activeView={activeView} novels={novels} setActiveView={setActiveView} />
+        <Sidebar activeView={activeView} novels={novels} setActiveView={changeActiveView} />
 
         <section className="workspace">
           <Toolbar
@@ -1109,7 +1134,16 @@ function App() {
               />
             )}
 
-            {activeView === 'authors' && <AuthorsView authors={authors} setSelectedNovel={setSelectedNovel} />}
+            {activeView === 'authors' && (
+              <AuthorsView
+                authors={authors}
+                selectedAuthor={selectedAuthor}
+                setSelectedAuthor={setSelectedAuthor}
+                setSelectedNovel={setSelectedNovel}
+                setWallPage={setWallPage}
+                wallPage={wallPage}
+              />
+            )}
             {activeView === 'stats' && <StatsView authors={authors} novels={novels} stats={stats} />}
             {activeView === 'backup' && <BackupView novels={novels} onReloadNovels={reloadNovels} />}
             {activeView === 'new' && (
@@ -2053,11 +2087,42 @@ function WallCard({
 
 function AuthorsView({
   authors,
+  selectedAuthor,
+  setSelectedAuthor,
   setSelectedNovel,
+  setWallPage,
+  wallPage,
 }: {
   authors: { author: string; works: Novel[]; liked: number; finished: number }[]
+  selectedAuthor: { author: string; works: Novel[] } | null
+  setSelectedAuthor: (author: { author: string; works: Novel[] } | null) => void
   setSelectedNovel: (novel: Novel) => void
+  setWallPage: (page: number) => void
+  wallPage: number
 }) {
+  if (selectedAuthor) {
+    return (
+      <section className="plain-section">
+        <div className="section-head">
+          <div>
+            <UserRound size={18} />
+            <h2>{selectedAuthor.author} 的作品</h2>
+          </div>
+          <button className="reset-filter" onClick={() => setSelectedAuthor(null)} type="button">
+            返回作者归档
+          </button>
+        </div>
+        <NovelWall
+          novels={selectedAuthor.works}
+          page={wallPage}
+          setPage={setWallPage}
+          setSelectedNovel={setSelectedNovel}
+          title={`${selectedAuthor.author} 的作品（${selectedAuthor.works.length}）`}
+        />
+      </section>
+    )
+  }
+
   return (
     <section className="plain-section">
       <div className="section-head">
@@ -2076,7 +2141,10 @@ function AuthorsView({
               <span>喜欢 <strong>{item.liked}</strong></span>
               <span>看完 <strong>{item.finished}</strong></span>
             </div>
-            <button onClick={() => setSelectedNovel(item.works[0])} type="button">
+            <button onClick={() => {
+              setWallPage(0)
+              setSelectedAuthor({ author: item.author, works: item.works })
+            }} type="button">
               查看作品
             </button>
           </article>
@@ -2690,7 +2758,7 @@ function NovelFormView({
     return {
       author: previewNovel.author,
       characters: previewNovel.characters,
-      cover: previewNovel.cover,
+      cover: mode === 'new' && previewNovel.cover === 'book' ? pickStableCover(previewNovel.title, previewNovel.author) : previewNovel.cover,
       cpCategory: previewNovel.cpCategory,
       createdAt: mode === 'new' ? today : previewNovel.createdAt,
       ending: normalizeEndingForForm(previewNovel.ending),
