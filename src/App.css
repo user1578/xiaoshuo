@@ -298,6 +298,11 @@
   background: var(--deep-blue);
 }
 
+.profile-menu button:disabled {
+  cursor: wait;
+  opacity: 0.65;
+}
+
 .about-backdrop {
   position: fixed;
   inset: 0;

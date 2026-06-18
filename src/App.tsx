@@ -1041,10 +1041,6 @@ function App() {
   }
 
   const handleCreateNovel = async (payload: NovelPayload) => {
-    if (cloudMode) {
-      throw new Error('云端模式暂未开放写入')
-    }
-
     const createdNovel = await createNovel<Novel>(payload)
     const apiNovels = await fetchNovels<Novel>()
 
@@ -1186,11 +1182,6 @@ function App() {
           </span>
         </button>
         <p className="top-note">今天也记录一点喜欢的故事吧</p>
-        {cloudMode && cloudSignedIn && (
-          <button className="cloud-session-button" disabled={cloudAuthLoading} onClick={handleCloudLogout} type="button">
-            退出登录
-          </button>
-        )}
       </header>
 
       <div className="layout-grid">
@@ -1198,7 +1189,10 @@ function App() {
 
         <section className="workspace">
           <Toolbar
+            cloudLogoutEnabled={cloudMode && cloudSignedIn}
+            cloudLogoutLoading={cloudAuthLoading}
             filterOpen={filterOpen}
+            onCloudLogout={handleCloudLogout}
             onOpenAbout={() => setAboutOpen(true)}
             query={query}
             setActiveView={setActiveView}
@@ -1439,7 +1433,10 @@ function Sidebar({
 }
 
 function Toolbar({
+  cloudLogoutEnabled,
+  cloudLogoutLoading,
   filterOpen,
+  onCloudLogout,
   onOpenAbout,
   query,
   setActiveView,
@@ -1447,7 +1444,10 @@ function Toolbar({
   setQuery,
   stats,
 }: {
+  cloudLogoutEnabled: boolean
+  cloudLogoutLoading: boolean
   filterOpen: boolean
+  onCloudLogout: () => Promise<void>
   onOpenAbout: () => void
   query: string
   setActiveView: (view: View) => void
@@ -1532,6 +1532,18 @@ function Toolbar({
             >
               关于
             </button>
+            {cloudLogoutEnabled && (
+              <button
+                disabled={cloudLogoutLoading}
+                onClick={() => {
+                  setProfileOpen(false)
+                  void onCloudLogout()
+                }}
+                type="button"
+              >
+                退出登录
+              </button>
+            )}
           </div>
         )}
       </div>

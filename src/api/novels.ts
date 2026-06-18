@@ -1,5 +1,5 @@
 import { isSupabaseDataSource } from './supabaseClient'
-import { fetchSupabaseNovels } from './supabaseNovels'
+import { createSupabaseNovel, fetchSupabaseNovels } from './supabaseNovels'
 
 const NOVELS_API_URL = 'http://127.0.0.1:3001/api/novels'
 const BACKUP_EXPORT_API_URL = 'http://127.0.0.1:3001/api/backup/export'
@@ -30,6 +30,10 @@ export async function fetchNovels<TNovel = unknown>(): Promise<TNovel[]> {
 }
 
 export async function createNovel<TNovel = unknown>(payload: unknown): Promise<TNovel> {
+  if (isSupabaseDataSource()) {
+    return createSupabaseNovel<TNovel>(payload as Parameters<typeof createSupabaseNovel>[0])
+  }
+
   assertLocalWriteEnabled()
 
   const response = await fetch(NOVELS_API_URL, {
