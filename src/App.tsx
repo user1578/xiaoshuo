@@ -30,6 +30,7 @@ import {
   exportNovelCsv,
   createNovel,
   deleteNovel,
+  deleteNovels,
   exportNovelBackup,
   fetchNovels,
   importNovelBackup,
@@ -1061,10 +1062,6 @@ function App() {
   }
 
   const handleDeleteNovel = async (id: number) => {
-    if (cloudMode) {
-      throw new Error('云端模式暂未开放写入')
-    }
-
     await deleteNovel(id)
     const apiNovels = await fetchNovels<Novel>()
 
@@ -1075,7 +1072,13 @@ function App() {
 
   const handleBulkDeleteNovels = async (ids: number[]) => {
     if (cloudMode) {
-      throw new Error('云端模式暂未开放写入')
+      await deleteNovels(ids)
+      const apiNovels = await fetchNovels<Novel>()
+
+      setNovels(apiNovels)
+      setError(null)
+      setSelectedNovel(null)
+      return
     }
 
     const deleteResults = await Promise.all(

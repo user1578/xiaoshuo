@@ -1,5 +1,11 @@
 import { isSupabaseDataSource } from './supabaseClient'
-import { createSupabaseNovel, fetchSupabaseNovels, updateSupabaseNovel } from './supabaseNovels'
+import {
+  createSupabaseNovel,
+  deleteSupabaseNovel,
+  deleteSupabaseNovels,
+  fetchSupabaseNovels,
+  updateSupabaseNovel,
+} from './supabaseNovels'
 
 const NOVELS_API_URL = 'http://127.0.0.1:3001/api/novels'
 const BACKUP_EXPORT_API_URL = 'http://127.0.0.1:3001/api/backup/export'
@@ -74,6 +80,10 @@ export async function updateNovel<TNovel = unknown>(id: number, payload: unknown
 }
 
 export async function deleteNovel(id: number, options?: { ignoreNotFound?: boolean }): Promise<void> {
+  if (isSupabaseDataSource()) {
+    return deleteSupabaseNovel(id, options)
+  }
+
   assertLocalWriteEnabled()
 
   const response = await fetch(`${NOVELS_API_URL}/${id}`, {
@@ -86,6 +96,28 @@ export async function deleteNovel(id: number, options?: { ignoreNotFound?: boole
 
   if (!response.ok) {
     throw new Error(`Failed to delete novel: ${response.status}`)
+  }
+}
+
+export async function deleteNovels(ids: number[]): Promise<void> {
+  if (isSupabaseDataSource()) {
+    return deleteSupabaseNovels(ids)
+  }
+
+  const deleteResults = await Promise.all(
+    ids.map(async (id) => {
+      try {
+        await deleteNovel(id, { ignoreNotFound: true })
+        return null
+      } catch (deleteError) {
+        return deleteError
+      }
+    }),
+  )
+  const deleteErrors = deleteResults.filter((deleteError) => deleteError !== null)
+
+  if (deleteErrors.length > 0) {
+    throw new Error(`批量删除完成，${deleteErrors.length} 本删除失败，请确认后端服务状态`)
   }
 }
 

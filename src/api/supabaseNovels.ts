@@ -352,3 +352,41 @@ export async function updateSupabaseNovel<TNovel = unknown>(
 
   return fetchSupabaseNovelById<TNovel>(id)
 }
+
+export async function deleteSupabaseNovel(id: number, options?: { ignoreNotFound?: boolean }): Promise<void> {
+  const userId = await getCurrentSupabaseUserId('delete Supabase novel')
+  const { data, error } = await supabase
+    .from('novels')
+    .delete()
+    .eq('id', id)
+    .eq('user_id', userId)
+    .select('id')
+    .returns<{ id: number }[]>()
+  assertSupabaseError('Failed to delete Supabase novel', error)
+
+  if ((data ?? []).length === 0 && !options?.ignoreNotFound) {
+    throw new Error('Failed to delete Supabase novel: novel not found')
+  }
+}
+
+export async function deleteSupabaseNovels(ids: number[]): Promise<void> {
+  const uniqueIds = Array.from(new Set(ids))
+
+  if (uniqueIds.length === 0) {
+    return
+  }
+
+  const userId = await getCurrentSupabaseUserId('delete Supabase novels')
+  const { data, error } = await supabase
+    .from('novels')
+    .delete()
+    .in('id', uniqueIds)
+    .eq('user_id', userId)
+    .select('id')
+    .returns<{ id: number }[]>()
+  assertSupabaseError('Failed to delete Supabase novels', error)
+
+  if ((data ?? []).length !== uniqueIds.length) {
+    throw new Error(`Failed to delete Supabase novels: deleted ${data?.length ?? 0} of ${uniqueIds.length}`)
+  }
+}
