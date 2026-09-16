@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState } from 'react'
-import type { CSSProperties, ReactNode, TouchEvent } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import type { ChangeEvent, CSSProperties, ReactNode, TouchEvent } from 'react'
 import type { LucideIcon } from 'lucide-react'
 import {
   Archive,
@@ -25,6 +25,17 @@ import {
   UserRound,
   X,
 } from 'lucide-react'
+import { CoverArt } from './components/CoverArt'
+import { MobileAuthors } from './components/mobile/MobileAuthors'
+import { MobileBottomNav } from './components/mobile/MobileBottomNav'
+import { MobileHome } from './components/mobile/MobileHome'
+import { MobileLibrary } from './components/mobile/MobileLibrary'
+import { MobileMoreDrawer } from './components/mobile/MobileMoreDrawer'
+import { MobileNovelDetail } from './components/mobile/MobileNovelDetail'
+import { MobileProfile } from './components/mobile/MobileProfile'
+import { createTemporaryCoverPreview } from './components/mobile/localCoverPreview'
+import { detailReturnView, pickNextNovelId } from './components/mobile/mobileState'
+import { MobileTopBar } from './components/mobile/MobileTopBar'
 import {
   confirmCsvImport,
   exportNovelCsv,
@@ -43,66 +54,26 @@ import {
   signInToSupabase,
   signOutFromSupabase,
 } from './api/supabaseClient'
+import type {
+  Character,
+  CharacterAttribute,
+  CoverStyle,
+  CpCategory,
+  DetailReturnView,
+  FilterState,
+  Novel,
+  NovelPayload,
+  Rating,
+  ReadStatus,
+  View,
+} from './types/novel'
+import { readStoredTheme } from './theme/themes'
+import type { ThemeId } from './theme/themes'
 import './App.css'
-
-type View =
-  | 'home'
-  | 'all'
-  | 'recent'
-  | 'authors'
-  | 'finished'
-  | 'liked'
-  | 'abandoned'
-  | 'stats'
-  | 'backup'
-  | 'new'
-  | 'edit'
-  | 'cp-1v1'
-  | 'cp-none'
-  | 'cp-np'
-
-type CharacterAttribute = '1' | '0' | '0.5' | '其他'
-type CpCategory = '1v1' | '无CP' | 'NP'
-type ReadStatus = '看完' | '荒废'
-type Rating = '喜欢' | '一般' | '不喜欢' | '未评价'
-
-type Character = {
-  name: string
-  attribute: CharacterAttribute
-}
-
-type CoverStyle =
-  | 'portrait'
-  | 'apple'
-  | 'cat'
-  | 'book'
-  | 'flower'
-  | 'moon'
-  | 'cloud'
-  | 'line'
+import './components/mobile/mobile.css'
 
 const availableCovers: CoverStyle[] = ['portrait', 'apple', 'cat', 'book', 'flower', 'moon', 'cloud', 'line']
 const cloudMode = isSupabaseDataSource()
-
-type Novel = {
-  id: number
-  title: string
-  author: string
-  characters: Character[]
-  cpCategory: CpCategory
-  ending: 'HE' | 'BE' | 'OE' | '未完结' | '未知' | '坑' | '其他'
-  status: ReadStatus
-  rating: Rating
-  readCount: number
-  tags: string[]
-  notes: string
-  createdAt: string
-  updatedAt: string
-  cover: CoverStyle
-  favorite: boolean
-}
-
-type NovelPayload = Omit<Novel, 'id'>
 
 type NovelBackup = {
   exportedAt: string
@@ -140,14 +111,6 @@ type CsvImportResult = {
   novels: Novel[]
 }
 
-type FilterState = {
-  status: '全部' | ReadStatus
-  rating: '全部' | Rating
-  characterAttribute: '全部' | CharacterAttribute
-  cpCategory: '全部' | CpCategory
-  ending: string
-  tag: string
-}
 
 type NavItem = {
   id: View
@@ -760,6 +723,8 @@ const emptyFilters: FilterState = {
   tag: '全部',
 }
 
+const developmentDefaultCover: CoverStyle = import.meta.env.DEV ? mockNovels[0]?.cover ?? 'book' : 'book'
+
 function getNavGroups(novels: Novel[]): { title: string; items: NavItem[] }[] {
   return [
     {
@@ -832,8 +797,30 @@ function pickStableCover(title: string, author: string): CoverStyle {
   return availableCovers[Math.abs(hash) % availableCovers.length] ?? 'book'
 }
 
+function createBlankNovel(): Novel {
+  const today = new Date().toISOString().slice(0, 10)
+
+  return {
+    id: 0,
+    title: '新记录的故事',
+    author: '待填写作者',
+    characters: [],
+    cpCategory: '1v1',
+    ending: '其他',
+    status: '看完',
+    rating: '未评价',
+    readCount: 1,
+    tags: [],
+    notes: '',
+    createdAt: today,
+    updatedAt: today,
+    cover: developmentDefaultCover,
+    favorite: false,
+  }
+}
+
 function App() {
-  const [novels, setNovels] = useState<Novel[]>(mockNovels)
+  const [novels, setNovels] = useState<Novel[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [cloudSignedIn, setCloudSignedIn] = useState(!cloudMode)
@@ -848,15 +835,53 @@ function App() {
   const [selectedNovel, setSelectedNovel] = useState<Novel | null>(null)
   const [carouselIndex, setCarouselIndex] = useState(0)
   const [wallPage, setWallPage] = useState(0)
-  const [editingNovel, setEditingNovel] = useState<Novel | null>(mockNovels[0])
+  const [editingNovel, setEditingNovel] = useState<Novel | null>(null)
   const [aboutOpen, setAboutOpen] = useState(false)
-  const [lastRandomNovelId, setLastRandomNovelId] = useState<number | null>(null)
+  const lastRandomNovelIdRef = useRef<number | null>(null)
+  const [homeRandomNovelId, setHomeRandomNovelId] = useState<number | null>(null)
+  const homeRandomNovelIdRef = useRef<number | null>(null)
   const [selectedAuthor, setSelectedAuthor] = useState<{ author: string; works: Novel[] } | null>(null)
+  const [detailReturnTo, setDetailReturnTo] = useState<DetailReturnView>('home')
+  const [editReturnTo, setEditReturnTo] = useState<'all' | 'detail'>('all')
+  const [moreOpen, setMoreOpen] = useState(false)
+  const [theme, setTheme] = useState<ThemeId>(() => readStoredTheme(localStorage.getItem('novel-bag-theme')))
+
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme
+    localStorage.setItem('novel-bag-theme', theme)
+  }, [theme])
+
+  useEffect(() => {
+    const handleThemeStorage = (event: StorageEvent) => {
+      if (event.key === 'novel-bag-theme') {
+        setTheme(readStoredTheme(event.newValue))
+      }
+    }
+
+    window.addEventListener('storage', handleThemeStorage)
+    return () => window.removeEventListener('storage', handleThemeStorage)
+  }, [])
+
+  const setHomeRandomNovel = useCallback((source: Novel[]) => {
+    const nextRandomId = pickNextNovelId(source, lastRandomNovelIdRef.current)
+    homeRandomNovelIdRef.current = nextRandomId
+    lastRandomNovelIdRef.current = nextRandomId
+    setHomeRandomNovelId(nextRandomId)
+  }, [])
+
+  const applyNovelCollection = useCallback((nextNovels: Novel[]) => {
+    setNovels(nextNovels)
+    setError(null)
+
+    const currentRandomId = homeRandomNovelIdRef.current
+    if (currentRandomId === null || !nextNovels.some((novel) => novel.id === currentRandomId)) {
+      setHomeRandomNovel(nextNovels)
+    }
+  }, [setHomeRandomNovel])
 
   const reloadNovels = async () => {
     const apiNovels = await fetchNovels<Novel>()
-    setNovels(apiNovels)
-    setError(null)
+    applyNovelCollection(apiNovels)
     return apiNovels
   }
 
@@ -882,8 +907,7 @@ function App() {
         })
         .then((apiNovels) => {
           if (ignore || !apiNovels) return
-          setNovels(apiNovels)
-          setError(null)
+          applyNovelCollection(apiNovels)
         })
         .catch((fetchError: unknown) => {
           if (ignore) return
@@ -905,12 +929,11 @@ function App() {
     fetchNovels<Novel>()
       .then((apiNovels) => {
         if (ignore) return
-        setNovels(apiNovels)
-        setError(null)
+        applyNovelCollection(apiNovels)
       })
       .catch((fetchError: unknown) => {
         if (ignore) return
-        setNovels(mockNovels)
+        setNovels([])
         setError(fetchError instanceof Error ? fetchError.message : '无法读取后端小说数据')
       })
       .finally(() => {
@@ -920,7 +943,7 @@ function App() {
     return () => {
       ignore = true
     }
-  }, [])
+  }, [applyNovelCollection])
 
   useEffect(() => {
     if (!selectedNovel) return
@@ -1015,6 +1038,16 @@ function App() {
     }).slice(0, 10)
   }, [filteredNovels])
 
+  const homeRandomNovel = useMemo(
+    () => novels.find((novel) => novel.id === homeRandomNovelId) ?? null,
+    [homeRandomNovelId, novels],
+  )
+
+  const recentNovels = useMemo(
+    () => [...novels].sort((firstNovel, secondNovel) => secondNovel.createdAt.localeCompare(firstNovel.createdAt)).slice(0, 5),
+    [novels],
+  )
+
   const authors = Array.from(new Set(novels.map((novel) => novel.author))).map((author) => {
     const works = novels.filter((novel) => novel.author === author)
     return {
@@ -1030,7 +1063,11 @@ function App() {
 
   const openEdit = (novel: Novel) => {
     setEditingNovel(novel)
-    setSelectedNovel(null)
+    const openedFromMobileDetail = activeView === 'detail'
+    setEditReturnTo(openedFromMobileDetail ? 'detail' : 'all')
+    if (!openedFromMobileDetail) {
+      setSelectedNovel(null)
+    }
     setActiveView('edit')
   }
 
@@ -1045,8 +1082,7 @@ function App() {
     const createdNovel = await createNovel<Novel>(payload)
     const apiNovels = await fetchNovels<Novel>()
 
-    setNovels(apiNovels)
-    setError(null)
+    applyNovelCollection(apiNovels)
     setSelectedNovel(apiNovels.find((novel) => novel.id === createdNovel.id) ?? createdNovel)
     setActiveView('all')
   }
@@ -1055,19 +1091,21 @@ function App() {
     const updatedNovel = await updateNovel<Novel>(id, payload)
     const apiNovels = await fetchNovels<Novel>()
 
-    setNovels(apiNovels)
-    setError(null)
-    setSelectedNovel(apiNovels.find((novel) => novel.id === updatedNovel.id) ?? updatedNovel)
-    setActiveView('all')
+    applyNovelCollection(apiNovels)
+    const latestNovel = apiNovels.find((novel) => novel.id === updatedNovel.id) ?? updatedNovel
+    setSelectedNovel(latestNovel)
+    setActiveView(editReturnTo)
   }
 
-  const handleDeleteNovel = async (id: number) => {
+  const handleDeleteNovel = async (id: number, returnTo?: DetailReturnView) => {
     await deleteNovel(id)
     const apiNovels = await fetchNovels<Novel>()
 
-    setNovels(apiNovels)
-    setError(null)
+    applyNovelCollection(apiNovels)
     setSelectedNovel(null)
+    if (returnTo) {
+      setActiveView(returnTo)
+    }
   }
 
   const handleBulkDeleteNovels = async (ids: number[]) => {
@@ -1075,8 +1113,7 @@ function App() {
       await deleteNovels(ids)
       const apiNovels = await fetchNovels<Novel>()
 
-      setNovels(apiNovels)
-      setError(null)
+      applyNovelCollection(apiNovels)
       setSelectedNovel(null)
       return
     }
@@ -1094,8 +1131,7 @@ function App() {
     const deleteErrors = deleteResults.filter((deleteError) => deleteError !== null)
     const apiNovels = await fetchNovels<Novel>()
 
-    setNovels(apiNovels)
-    setError(null)
+    applyNovelCollection(apiNovels)
     setSelectedNovel(null)
 
     if (deleteErrors.length > 0) {
@@ -1104,14 +1140,41 @@ function App() {
   }
 
   const openRandomNovel = () => {
-    if (novels.length === 0) return
+    const randomNovelId = pickNextNovelId(novels, lastRandomNovelIdRef.current)
+    if (randomNovelId === null) return
 
-    const candidates =
-      novels.length > 1 && lastRandomNovelId !== null ? novels.filter((novel) => novel.id !== lastRandomNovelId) : novels
-    const randomNovel = candidates[Math.floor(Math.random() * candidates.length)]
+    const randomNovel = novels.find((novel) => novel.id === randomNovelId)
+    if (!randomNovel) return
 
-    setLastRandomNovelId(randomNovel.id)
+    lastRandomNovelIdRef.current = randomNovelId
     setSelectedNovel(randomNovel)
+  }
+
+  const refreshHomeRandomNovel = () => {
+    setHomeRandomNovel(novels)
+  }
+
+  const openMobileDetail = (novel: Novel, source: View) => {
+    setSelectedNovel(novel)
+    setDetailReturnTo(detailReturnView(source))
+    setActiveView('detail')
+  }
+
+  const returnFromMobileDetail = () => {
+    setSelectedNovel(null)
+    setActiveView(detailReturnTo)
+  }
+
+  const retryNovelLoad = async () => {
+    setLoading(true)
+    try {
+      await reloadNovels()
+    } catch (reloadError) {
+      setNovels([])
+      setError(reloadError instanceof Error ? reloadError.message : '无法读取小说数据，请稍后重试')
+    } finally {
+      setLoading(false)
+    }
   }
 
   const handleCloudLogin = async () => {
@@ -1152,6 +1215,124 @@ function App() {
     }
   }
 
+  const mobileContent = (() => {
+    if (loading) {
+      return <section className="mobile-data-state" role="status"><Clock3 size={24} /><h2>正在读取小说数据</h2><p>请稍候，故事正在回到书袋里。</p></section>
+    }
+
+    if (error) {
+      return (
+        <section className="mobile-data-state mobile-data-error" role="alert">
+          <X size={24} />
+          <h2>暂时无法读取书库</h2>
+          <p>{error}</p>
+          <button className="mobile-primary-action" onClick={() => void retryNovelLoad()} type="button">重新读取</button>
+        </section>
+      )
+    }
+
+    if (activeView === 'home') {
+      return (
+        <>
+          <MobileTopBar onMore={() => setMoreOpen(true)} subtitle="把喜欢的故事装进口袋" title="小说袋" />
+          <MobileHome
+            onNew={() => setActiveView('new')}
+            onOpenLibrary={() => setActiveView('all')}
+            onOpenNovel={(novel) => openMobileDetail(novel, 'home')}
+            onQueryChange={setQuery}
+            onRefreshRandom={refreshHomeRandomNovel}
+            query={query}
+            randomNovel={homeRandomNovel}
+            recentNovels={recentNovels}
+            stats={stats}
+          />
+        </>
+      )
+    }
+
+    if (activeView === 'authors') {
+      return (
+        <>
+          <MobileTopBar onMore={() => setMoreOpen(true)} subtitle="按作品数量整理" title="作者档案" />
+          <MobileAuthors
+            authors={authors}
+            onClearAuthor={() => setSelectedAuthor(null)}
+            onOpenNovel={(novel) => openMobileDetail(novel, 'authors')}
+            onQueryChange={setQuery}
+            onSelectAuthor={setSelectedAuthor}
+            query={query}
+            selectedAuthor={selectedAuthor}
+          />
+        </>
+      )
+    }
+
+    if (activeView === 'profile') {
+      return (
+        <>
+          <MobileTopBar onMore={() => setMoreOpen(true)} subtitle="管理你的书袋" title="我的" />
+          <MobileProfile
+            cloudLogoutEnabled={cloudMode && cloudSignedIn}
+            cloudLogoutLoading={cloudAuthLoading}
+            onCloudLogout={handleCloudLogout}
+            onNavigate={changeActiveView}
+            onOpenAbout={() => setAboutOpen(true)}
+            onThemeChange={setTheme}
+            theme={theme}
+          />
+        </>
+      )
+    }
+
+    if (activeView === 'detail') {
+      return selectedNovel ? (
+        <>
+          <MobileTopBar onBack={returnFromMobileDetail} onMore={() => setMoreOpen(true)} title="小说详情" />
+          <MobileNovelDetail
+            novel={selectedNovel}
+            onBack={returnFromMobileDetail}
+            onDelete={() => handleDeleteNovel(selectedNovel.id, detailReturnTo)}
+            onEdit={() => openEdit(selectedNovel)}
+          />
+        </>
+      ) : <section className="mobile-data-state"><h2>没有可显示的小说</h2><button className="mobile-primary-action" onClick={returnFromMobileDetail} type="button">返回</button></section>
+    }
+
+    if (activeView === 'backup') {
+      return <><MobileTopBar onBack={() => setActiveView('profile')} title="数据管理" /><div className="mobile-page mobile-legacy-page"><BackupView novels={novels} onReloadNovels={reloadNovels} /></div></>
+    }
+
+    if (activeView === 'stats') {
+      return <><MobileTopBar onBack={() => setActiveView('home')} onMore={() => setMoreOpen(true)} title="统计" /><div className="mobile-page mobile-legacy-page"><StatsView authors={authors} novels={novels} stats={stats} /></div></>
+    }
+
+    if (activeView === 'new') {
+      return <><MobileTopBar onBack={() => setActiveView('all')} title="新增小说" /><div className="mobile-page mobile-form-page"><NovelFormView allTags={allTags} fallbackNovel={createBlankNovel()} mode="new" novels={novels} onCancel={() => setActiveView('all')} onCreateNovel={handleCreateNovel} setActiveView={setActiveView} /></div></>
+    }
+
+    if (activeView === 'edit') {
+      return <><MobileTopBar onBack={() => setActiveView(editReturnTo)} title="编辑小说" /><div className="mobile-page mobile-form-page"><NovelFormView allTags={allTags} fallbackNovel={createBlankNovel()} mode="edit" novel={editingNovel ?? createBlankNovel()} novels={novels} onCancel={() => setActiveView(editReturnTo)} onUpdateNovel={handleUpdateNovel} setActiveView={setActiveView} /></div></>
+    }
+
+    return (
+      <>
+        <MobileTopBar title={viewTitle(activeView)} />
+        <MobileLibrary
+          activeView={activeView}
+          novels={visibleNovels}
+          onBulkDelete={handleBulkDeleteNovels}
+          onNavigate={changeActiveView}
+          onNew={() => setActiveView('new')}
+          onOpenFilter={() => setFilterOpen(true)}
+          onOpenMore={() => setMoreOpen(true)}
+          onOpenNovel={(novel) => openMobileDetail(novel, activeView)}
+          onQueryChange={setQuery}
+          query={query}
+        />
+      </>
+    )
+  })()
+
   if (cloudMode && !cloudAuthLoading && !cloudSignedIn) {
     return (
       <CloudLoginView
@@ -1168,6 +1349,7 @@ function App() {
 
   return (
     <main className="novel-app">
+      <div className="desktop-shell">
       <DecorativeLines />
 
       <header className="topbar">
@@ -1204,7 +1386,7 @@ function App() {
             <div className="section-head" role="status">
               <div>
                 <Clock3 size={18} />
-                <h2>{loading ? '正在读取小说数据' : '后端数据读取失败，正在显示本地临时数据'}</h2>
+                <h2>{loading ? '正在读取小说数据' : '后端数据读取失败，请检查服务后重试'}</h2>
               </div>
             </div>
           )}
@@ -1266,7 +1448,7 @@ function App() {
             {activeView === 'new' && (
               <NovelFormView
                 allTags={allTags}
-                fallbackNovel={novels[0] ?? mockNovels[0]}
+                fallbackNovel={novels[0] ?? createBlankNovel()}
                 mode="new"
                 novels={novels}
                 onCreateNovel={handleCreateNovel}
@@ -1276,9 +1458,9 @@ function App() {
             {activeView === 'edit' && (
               <NovelFormView
                 allTags={allTags}
-                fallbackNovel={novels[0] ?? mockNovels[0]}
+                fallbackNovel={novels[0] ?? createBlankNovel()}
                 mode="edit"
-                novel={editingNovel ?? novels[0] ?? mockNovels[0]}
+                novel={editingNovel ?? novels[0] ?? createBlankNovel()}
                 novels={novels}
                 setActiveView={setActiveView}
                 onUpdateNovel={handleUpdateNovel}
@@ -1310,7 +1492,7 @@ function App() {
         })}
       </footer>
 
-      {selectedNovel && (
+      {selectedNovel && activeView !== 'detail' && activeView !== 'edit' && activeView !== 'new' && (
         <DetailModal
           novel={selectedNovel}
           onClose={() => setSelectedNovel(null)}
@@ -1318,6 +1500,27 @@ function App() {
           onEdit={openEdit}
         />
       )}
+
+      </div>
+
+      <section className="mobile-shell" aria-label="小说袋手机端界面">
+        <div className="mobile-content">{mobileContent}</div>
+        {filterOpen && (
+          <FilterPanel
+            filters={filters}
+            onClose={() => setFilterOpen(false)}
+            setFilters={setFilters}
+            tags={allTags}
+          />
+        )}
+        <MobileMoreDrawer
+          onClose={() => setMoreOpen(false)}
+          onNavigate={changeActiveView}
+          open={moreOpen}
+        />
+        <MobileBottomNav activeView={activeView} onNavigate={changeActiveView} />
+      </section>
+
       {aboutOpen && <AboutModal onClose={() => setAboutOpen(false)} />}
     </main>
   )
@@ -1580,11 +1783,11 @@ function AboutModal({ onClose }: { onClose: () => void }) {
             </div>
             <div>
               <dt>当前数据</dt>
-              <dd>模拟数据</dd>
+              <dd>本地或云端书库数据</dd>
             </div>
             <div className="about-plan">
               <dt>后续计划</dt>
-              <dd>接入 SQLite、本地数据保存、搜索查重和真实备份</dd>
+              <dd>持续优化移动端记录体验</dd>
             </div>
           </dl>
           <button className="about-close" onClick={onClose} type="button">
@@ -2866,6 +3069,7 @@ function NovelFormView({
   mode,
   novel,
   novels,
+  onCancel,
   onCreateNovel,
   onUpdateNovel,
   setActiveView,
@@ -2875,6 +3079,7 @@ function NovelFormView({
   mode: 'new' | 'edit'
   novel?: Novel
   novels: Novel[]
+  onCancel?: () => void
   onCreateNovel?: (payload: NovelPayload) => Promise<void>
   onUpdateNovel?: (id: number, payload: NovelPayload) => Promise<void>
   setActiveView: (view: View) => void
@@ -2908,6 +3113,16 @@ function NovelFormView({
   const [saving, setSaving] = useState(false)
   const [submitError, setSubmitError] = useState<string | null>(null)
   const [pendingDuplicate, setPendingDuplicate] = useState<PendingDuplicate | null>(null)
+  const [localCoverPreviewUrl, setLocalCoverPreviewUrl] = useState<string | null>(null)
+  const coverInputRef = useRef<HTMLInputElement>(null)
+
+  useEffect(() => {
+    return () => {
+      if (localCoverPreviewUrl) {
+        URL.revokeObjectURL(localCoverPreviewUrl)
+      }
+    }
+  }, [localCoverPreviewUrl])
 
   const previewNovel: Novel = {
     ...baseNovel,
@@ -2950,6 +3165,19 @@ function NovelFormView({
     if (cleanTag.length === 0 || selectedTags.includes(cleanTag)) return
     setSelectedTags([...selectedTags, cleanTag])
     setTagInput('')
+  }
+
+  const handleLocalCoverSelect = (event: ChangeEvent<HTMLInputElement>) => {
+    const selectedFile = event.target.files?.[0]
+    if (!selectedFile) return
+    setLocalCoverPreviewUrl(createTemporaryCoverPreview(selectedFile))
+  }
+
+  const clearLocalCoverPreview = () => {
+    setLocalCoverPreviewUrl(null)
+    if (coverInputRef.current) {
+      coverInputRef.current.value = ''
+    }
   }
 
   const buildPayload = (): NovelPayload => {
@@ -3091,6 +3319,22 @@ function NovelFormView({
           <span>{mode === 'new' ? '静态表单原型' : previewNovel.title}</span>
         </div>
 
+        <section className="local-cover-picker" aria-labelledby="local-cover-title">
+          <div className="local-cover-preview" aria-hidden="true">
+            {localCoverPreviewUrl ? <img alt="" src={localCoverPreviewUrl} /> : <CoverArt cover={previewNovel.cover} size="wall" />}
+          </div>
+          <div>
+            <span>当前封面</span>
+            <h3 id="local-cover-title">本地图片封面</h3>
+            <p>本阶段仅在当前页面预览，刷新后会消失，不会保存到书库数据。</p>
+            <input accept="image/*" className="local-cover-input" onChange={handleLocalCoverSelect} ref={coverInputRef} type="file" />
+            <div className="local-cover-actions">
+              <button className="outline-button" onClick={() => coverInputRef.current?.click()} type="button">从本地图片选择</button>
+              <button onClick={clearLocalCoverPreview} type="button">使用默认封面</button>
+            </div>
+          </div>
+        </section>
+
         {submitError && <p role="alert">{submitError}</p>}
         {pendingDuplicate && (
           <div className="form-section" role="alert">
@@ -3190,7 +3434,7 @@ function NovelFormView({
             <Save size={17} />
             {saving ? '保存中' : '保存'}
           </button>
-          <button onClick={() => setActiveView('home')} type="button">
+          <button onClick={onCancel ?? (() => setActiveView('home'))} type="button">
             取消
           </button>
           <button type="button">
@@ -3339,23 +3583,6 @@ function Info({ label, value }: { label: string; value: string }) {
       <strong>{label}</strong>
       <span>{value}</span>
     </p>
-  )
-}
-
-function CoverArt({ cover, size }: { cover: CoverStyle; size: 'feature' | 'wall' | 'detail' }) {
-  return (
-    <div className={`cover-art cover-${cover} cover-${size}`} aria-hidden="true">
-      <span className="shape moon" />
-      <span className="shape apple" />
-      <span className="shape cat-face" />
-      <span className="shape book-block" />
-      <span className="shape flower" />
-      <span className="shape cloud" />
-      <span className="shape portrait-head" />
-      <span className="shape line-one" />
-      <span className="shape line-two" />
-      <BookOpen size={size === 'wall' ? 22 : 30} />
-    </div>
   )
 }
 
