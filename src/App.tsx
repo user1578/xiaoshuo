@@ -26,6 +26,7 @@ import {
   X,
 } from 'lucide-react'
 import { CoverArt } from './components/CoverArt'
+import { NovelCover } from './components/NovelCover'
 import { MobileAuthors } from './components/mobile/MobileAuthors'
 import { MobileBottomNav } from './components/mobile/MobileBottomNav'
 import { MobileHome } from './components/mobile/MobileHome'
@@ -44,10 +45,14 @@ import {
   deleteNovels,
   exportNovelBackup,
   fetchNovels,
+  getMobileLibraryStatus,
+  previewNovelBackup,
   importNovelBackup,
   previewCsvImport,
+  shareNovelBackup,
   updateNovel,
 } from './api/novels'
+import { resolveDataSource } from './data/dataSource'
 import {
   getSupabaseSession,
   isSupabaseDataSource,
@@ -57,6 +62,7 @@ import {
 import type {
   Character,
   CharacterAttribute,
+  CoverChange,
   CoverStyle,
   CpCategory,
   DetailReturnView,
@@ -74,6 +80,7 @@ import './components/mobile/mobile.css'
 
 const availableCovers: CoverStyle[] = ['portrait', 'apple', 'cat', 'book', 'flower', 'moon', 'cloud', 'line']
 const cloudMode = isSupabaseDataSource()
+const mobileMode = resolveDataSource() === 'mobile'
 
 type NovelBackup = {
   exportedAt: string
@@ -85,6 +92,16 @@ type NovelImportResult = {
   importedAt: string
   count: number
   novels: Novel[]
+}
+
+type MobileJsonPreview = {
+  sourceCount: number
+  validCount: number
+  errorCount: number
+  targetCount: number
+  duplicateNovelKeys: string[]
+  issues: { path: string; message: string }[]
+  canRestore: boolean
 }
 
 type CsvImportPreviewRow = {
@@ -845,6 +862,12 @@ function App() {
   const [editReturnTo, setEditReturnTo] = useState<'all' | 'detail'>('all')
   const [moreOpen, setMoreOpen] = useState(false)
   const [theme, setTheme] = useState<ThemeId>(() => readStoredTheme(localStorage.getItem('novel-bag-theme')))
+  const [mobileLibraryStatus, setMobileLibraryStatus] = useState<{
+    novelCount: number
+    authorCount: number
+    tagCount: number
+    schemaVersion: number
+  } | undefined>()
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme
@@ -882,8 +905,26 @@ function App() {
   const reloadNovels = async () => {
     const apiNovels = await fetchNovels<Novel>()
     applyNovelCollection(apiNovels)
+    if (mobileMode) {
+      setMobileLibraryStatus(await getMobileLibraryStatus<typeof mobileLibraryStatus>())
+    }
     return apiNovels
   }
+
+  useEffect(() => {
+    if (!mobileMode) return
+    let cancelled = false
+    void getMobileLibraryStatus<NonNullable<typeof mobileLibraryStatus>>()
+      .then((status) => {
+        if (!cancelled) setMobileLibraryStatus(status)
+      })
+      .catch(() => {
+        if (!cancelled) setMobileLibraryStatus(undefined)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [novels.length])
 
   useEffect(() => {
     let ignore = false
@@ -1078,8 +1119,8 @@ function App() {
     setActiveView(view)
   }
 
-  const handleCreateNovel = async (payload: NovelPayload) => {
-    const createdNovel = await createNovel<Novel>(payload)
+  const handleCreateNovel = async (payload: NovelPayload, coverChange?: CoverChange) => {
+    const createdNovel = await createNovel<Novel>(payload, coverChange)
     const apiNovels = await fetchNovels<Novel>()
 
     applyNovelCollection(apiNovels)
@@ -1087,8 +1128,8 @@ function App() {
     setActiveView('all')
   }
 
-  const handleUpdateNovel = async (id: number, payload: NovelPayload) => {
-    const updatedNovel = await updateNovel<Novel>(id, payload)
+  const handleUpdateNovel = async (id: number, payload: NovelPayload, coverChange?: CoverChange) => {
+    const updatedNovel = await updateNovel<Novel>(id, payload, coverChange)
     const apiNovels = await fetchNovels<Novel>()
 
     applyNovelCollection(apiNovels)
@@ -1236,6 +1277,7 @@ function App() {
         <>
           <MobileTopBar onMore={() => setMoreOpen(true)} subtitle="把喜欢的故事装进口袋" title="小说袋" />
           <MobileHome
+            onImport={() => setActiveView('backup')}
             onNew={() => setActiveView('new')}
             onOpenLibrary={() => setActiveView('all')}
             onOpenNovel={(novel) => openMobileDetail(novel, 'home')}
@@ -1275,6 +1317,8 @@ function App() {
             cloudLogoutEnabled={cloudMode && cloudSignedIn}
             cloudLogoutLoading={cloudAuthLoading}
             onCloudLogout={handleCloudLogout}
+            libraryStatus={mobileLibraryStatus}
+            mobileMode={mobileMode}
             onNavigate={changeActiveView}
             onOpenAbout={() => setAboutOpen(true)}
             onThemeChange={setTheme}
@@ -1299,7 +1343,7 @@ function App() {
     }
 
     if (activeView === 'backup') {
-      return <><MobileTopBar onBack={() => setActiveView('profile')} title="数据管理" /><div className="mobile-page mobile-legacy-page"><BackupView novels={novels} onReloadNovels={reloadNovels} /></div></>
+      return <><MobileTopBar onBack={() => setActiveView('profile')} title="数据管理" /><div className="mobile-page mobile-legacy-page"><BackupView mobileMode={mobileMode} novels={novels} onReloadNovels={reloadNovels} /></div></>
     }
 
     if (activeView === 'stats') {
@@ -1444,7 +1488,7 @@ function App() {
               />
             )}
             {activeView === 'stats' && <StatsView authors={authors} novels={novels} stats={stats} />}
-            {activeView === 'backup' && <BackupView novels={novels} onReloadNovels={reloadNovels} />}
+            {activeView === 'backup' && <BackupView mobileMode={mobileMode} novels={novels} onReloadNovels={reloadNovels} />}
             {activeView === 'new' && (
               <NovelFormView
                 allTags={allTags}
@@ -2254,7 +2298,7 @@ function SpotlightCard({
 
   return (
     <article className={`spotlight-card ${className}`} onClick={onCardClick}>
-      <CoverArt cover={novel.cover} size="feature" />
+      <NovelCover novel={novel} size="feature" />
       <div className="spotlight-info">
         <span className="status-pill">{novel.status}</span>
         <h3>{novel.title}</h3>
@@ -2467,7 +2511,7 @@ function WallCard({
           <span>选择</span>
         </label>
       )}
-      <CoverArt cover={novel.cover} size="wall" />
+      <NovelCover novel={novel} size="wall" />
       <div className="wall-info">
         <h3>{novel.title}</h3>
         <p>{novel.author}</p>
@@ -2743,7 +2787,15 @@ function StatsSecondaryPanel({
   )
 }
 
-function BackupView({ novels, onReloadNovels }: { novels: Novel[]; onReloadNovels: () => Promise<Novel[]> }) {
+function BackupView({
+  mobileMode,
+  novels,
+  onReloadNovels,
+}: {
+  mobileMode: boolean
+  novels: Novel[]
+  onReloadNovels: () => Promise<Novel[]>
+}) {
   const [exporting, setExporting] = useState(false)
   const [exportingCsv, setExportingCsv] = useState(false)
   const [exportError, setExportError] = useState<string | null>(null)
@@ -2751,6 +2803,9 @@ function BackupView({ novels, onReloadNovels }: { novels: Novel[]; onReloadNovel
   const [importError, setImportError] = useState<string | null>(null)
   const [importMessage, setImportMessage] = useState<string | null>(null)
   const [selectedBackupFile, setSelectedBackupFile] = useState<File | null>(null)
+  const [backupPayload, setBackupPayload] = useState<unknown>(null)
+  const [jsonPreview, setJsonPreview] = useState<MobileJsonPreview | null>(null)
+  const [jsonPreviewing, setJsonPreviewing] = useState(false)
   const [selectedCsvFile, setSelectedCsvFile] = useState<File | null>(null)
   const [csvText, setCsvText] = useState('')
   const [csvPreview, setCsvPreview] = useState<CsvImportPreview | null>(null)
@@ -2775,6 +2830,10 @@ function BackupView({ novels, onReloadNovels }: { novels: Novel[]; onReloadNovel
     setExportError(null)
 
     try {
+      if (mobileMode) {
+        await shareNovelBackup()
+        return
+      }
       const backup = await exportNovelBackup<NovelBackup>()
       const today = new Date().toISOString().slice(0, 10)
       const blob = new Blob([JSON.stringify(backup, null, 2)], { type: 'application/json;charset=utf-8' })
@@ -2819,13 +2878,41 @@ function BackupView({ novels, onReloadNovels }: { novels: Novel[]; onReloadNovel
     }
   }
 
+  const handlePreviewJson = async () => {
+    if (!selectedBackupFile) {
+      setImportError('请先选择 JSON 文件')
+      return
+    }
+
+    setJsonPreviewing(true)
+    setImportError(null)
+    setImportMessage(null)
+    try {
+      const payload = JSON.parse(await selectedBackupFile.text()) as unknown
+      const preview = await previewNovelBackup<MobileJsonPreview>(payload)
+      setBackupPayload(payload)
+      setJsonPreview(preview)
+    } catch (error) {
+      setBackupPayload(null)
+      setJsonPreview(null)
+      setImportError(error instanceof SyntaxError ? 'JSON 文件格式错误' : error instanceof Error ? error.message : 'JSON 预览失败')
+    } finally {
+      setJsonPreviewing(false)
+    }
+  }
+
   const handleImportJson = async () => {
     if (!selectedBackupFile) {
       setImportError('请先选择 JSON 文件')
       return
     }
 
-    const confirmed = window.confirm('导入会覆盖当前数据库中的小说数据，建议先导出当前数据备份。确定继续吗？')
+    if (mobileMode && (!jsonPreview || !jsonPreview.canRestore || backupPayload === null)) {
+      setImportError('请先完成可恢复的 JSON 预览')
+      return
+    }
+    const replacementNotice = mobileMode && novels.length > 0 ? '这将替换手机当前书库。' : ''
+    const confirmed = window.confirm(`${replacementNotice}导入会覆盖当前数据库中的小说数据，建议先导出当前数据备份。确定继续吗？`)
     if (!confirmed) return
 
     setImporting(true)
@@ -2833,13 +2920,14 @@ function BackupView({ novels, onReloadNovels }: { novels: Novel[]; onReloadNovel
     setImportMessage(null)
 
     try {
-      const rawBackup = await selectedBackupFile.text()
-      const backup = JSON.parse(rawBackup) as unknown
+      const backup = mobileMode ? backupPayload : (JSON.parse(await selectedBackupFile.text()) as unknown)
       const result = await importNovelBackup<NovelImportResult>(backup)
 
       await onReloadNovels()
       setImportMessage(`导入成功，共恢复 ${result.count} 本小说`)
       setSelectedBackupFile(null)
+      setBackupPayload(null)
+      setJsonPreview(null)
     } catch (error) {
       if (error instanceof SyntaxError) {
         setImportError('JSON 文件格式错误')
@@ -2948,15 +3036,16 @@ function BackupView({ novels, onReloadNovels }: { novels: Novel[]; onReloadNovel
             <button disabled={exporting} onClick={handleExportJson} type="button">
               {exporting ? '导出中' : '导出 JSON'}
             </button>
-            <button disabled={exportingCsv} onClick={handleExportCsv} type="button">
+            {!mobileMode && <button disabled={exportingCsv} onClick={handleExportCsv} type="button">
               {exportingCsv ? '导出中' : '导出 CSV'}
-            </button>
+            </button>}
           </div>
           {exportError && <p role="alert">{exportError}</p>}
           <ul>
             <li>文件名格式为 novel-backup-日期.json。</li>
             <li>JSON 包含小说基础信息、主角、标签、评价、阅读次数和时间记录。</li>
             <li>导入会覆盖当前数据库，请先导出当前数据备份。</li>
+            {mobileMode && <li>自定义封面图片未包含在 JSON 数据备份中。</li>}
           </ul>
         </article>
 
@@ -2968,6 +3057,8 @@ function BackupView({ novels, onReloadNovels }: { novels: Novel[]; onReloadNovel
               accept="application/json,.json"
               onChange={(event) => {
                 setSelectedBackupFile(event.target.files?.[0] ?? null)
+                setBackupPayload(null)
+                setJsonPreview(null)
                 setImportError(null)
                 setImportMessage(null)
               }}
@@ -2975,16 +3066,30 @@ function BackupView({ novels, onReloadNovels }: { novels: Novel[]; onReloadNovel
             />
           </label>
           <div className="backup-buttons">
-            <button disabled={importing || !selectedBackupFile} onClick={handleImportJson} type="button">
-              {importing ? '导入中' : '导入 JSON'}
+            {mobileMode && <button disabled={jsonPreviewing || !selectedBackupFile} onClick={handlePreviewJson} type="button">
+              {jsonPreviewing ? '预览中' : '预览 JSON'}
+            </button>}
+            <button disabled={importing || !selectedBackupFile || (mobileMode && !jsonPreview?.canRestore)} onClick={handleImportJson} type="button">
+              {importing ? '导入中' : mobileMode ? '确认恢复 JSON' : '导入 JSON'}
             </button>
           </div>
           {selectedBackupFile && <p>已选择：{selectedBackupFile.name}</p>}
+          {jsonPreview && (
+            <div>
+              <p>源记录 {jsonPreview.sourceCount} / 合法 {jsonPreview.validCount} / 错误 {jsonPreview.errorCount} / 当前书库 {jsonPreview.targetCount}</p>
+              {jsonPreview.duplicateNovelKeys.length > 0 && <p>重复书名与作者警告：{jsonPreview.duplicateNovelKeys.join('；')}</p>}
+              {jsonPreview.issues.length > 0 && <ol className="backup-records">{jsonPreview.issues.map((issue) => <li key={`${issue.path}-${issue.message}`}><strong>{issue.path}</strong><span>{issue.message}</span></li>)}</ol>}
+              {mobileMode && novels.length > 0 && <p>这将替换手机当前书库。</p>}
+              {mobileMode && <p>自定义封面图片未包含在 JSON 数据备份中。</p>}
+            </div>
+          )}
           {importMessage && <p role="status">{importMessage}</p>}
           {importError && <p role="alert">{importError}</p>}
         </article>
 
-        <article className="backup-card import-card">
+        {mobileMode ? (
+          <article className="backup-card import-card"><h3>CSV</h3><p>移动端 CSV 导入导出将在后续版本提供</p></article>
+        ) : <article className="backup-card import-card">
           <h3>导入 CSV</h3>
           <p>选择按固定表头整理的 CSV，先预览校验，确认后写入 SQLite。</p>
           <label className="tag-input">
@@ -3031,7 +3136,7 @@ function BackupView({ novels, onReloadNovels }: { novels: Novel[]; onReloadNovel
           )}
           {csvMessage && <p role="status">{csvMessage}</p>}
           {csvError && <p role="alert">{csvError}</p>}
-        </article>
+        </article>}
       </div>
 
       <div className="backup-lower-grid">
@@ -3080,8 +3185,8 @@ function NovelFormView({
   novel?: Novel
   novels: Novel[]
   onCancel?: () => void
-  onCreateNovel?: (payload: NovelPayload) => Promise<void>
-  onUpdateNovel?: (id: number, payload: NovelPayload) => Promise<void>
+  onCreateNovel?: (payload: NovelPayload, coverChange: CoverChange) => Promise<void>
+  onUpdateNovel?: (id: number, payload: NovelPayload, coverChange: CoverChange) => Promise<void>
   setActiveView: (view: View) => void
 }) {
   const baseNovel = novel ?? {
@@ -3114,6 +3219,7 @@ function NovelFormView({
   const [submitError, setSubmitError] = useState<string | null>(null)
   const [pendingDuplicate, setPendingDuplicate] = useState<PendingDuplicate | null>(null)
   const [localCoverPreviewUrl, setLocalCoverPreviewUrl] = useState<string | null>(null)
+  const [coverChange, setCoverChange] = useState<CoverChange>({ kind: 'keep' })
   const coverInputRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
@@ -3126,6 +3232,7 @@ function NovelFormView({
 
   const previewNovel: Novel = {
     ...baseNovel,
+    coverImagePath: coverChange.kind === 'remove' ? null : baseNovel.coverImagePath,
     title,
     author,
     characters,
@@ -3171,10 +3278,12 @@ function NovelFormView({
     const selectedFile = event.target.files?.[0]
     if (!selectedFile) return
     setLocalCoverPreviewUrl(createTemporaryCoverPreview(selectedFile))
+    setCoverChange({ kind: 'replace', file: selectedFile })
   }
 
   const clearLocalCoverPreview = () => {
     setLocalCoverPreviewUrl(null)
+    setCoverChange({ kind: 'remove' })
     if (coverInputRef.current) {
       coverInputRef.current.value = ''
     }
@@ -3206,11 +3315,11 @@ function NovelFormView({
 
     try {
       if (mode === 'new' && onCreateNovel) {
-        await onCreateNovel(payload)
+        await onCreateNovel(payload, coverChange)
       }
 
       if (mode === 'edit' && novel && onUpdateNovel) {
-        await onUpdateNovel(novel.id, payload)
+        await onUpdateNovel(novel.id, payload, coverChange)
       }
     } catch (error) {
       setSubmitError(error instanceof Error ? error.message : '保存失败，请确认后端服务已启动')
@@ -3321,12 +3430,12 @@ function NovelFormView({
 
         <section className="local-cover-picker" aria-labelledby="local-cover-title">
           <div className="local-cover-preview" aria-hidden="true">
-            {localCoverPreviewUrl ? <img alt="" src={localCoverPreviewUrl} /> : <CoverArt cover={previewNovel.cover} size="wall" />}
+            {localCoverPreviewUrl ? <img alt="" src={localCoverPreviewUrl} /> : <NovelCover novel={previewNovel} size="wall" />}
           </div>
           <div>
             <span>当前封面</span>
             <h3 id="local-cover-title">本地图片封面</h3>
-            <p>本阶段仅在当前页面预览，刷新后会消失，不会保存到书库数据。</p>
+            <p>选择后仅作即时预览；移动端保存时会写入 App 私有封面目录，Web 不会上传图片。</p>
             <input accept="image/*" className="local-cover-input" onChange={handleLocalCoverSelect} ref={coverInputRef} type="file" />
             <div className="local-cover-actions">
               <button className="outline-button" onClick={() => coverInputRef.current?.click()} type="button">从本地图片选择</button>
@@ -3535,7 +3644,7 @@ function DetailModal({
           </button>
         </div>
         <div className="detail-body">
-          <CoverArt cover={novel.cover} size="detail" />
+          <NovelCover novel={novel} size="detail" />
           <section className="detail-info">
             <h2>{novel.title}</h2>
             <p>作者：{novel.author}</p>

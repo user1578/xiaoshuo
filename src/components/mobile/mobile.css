@@ -1021,3 +1021,19 @@
     min-width: 92px;
   }
 }
+
+.mobile-empty-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: center;
+  margin-top: 12px;
+}
+
+.mobile-empty-actions button {
+  background: var(--accent, #705fdb);
+  border: 0;
+  border-radius: 999px;
+  color: #fff;
+  padding: 8px 12px;
+}

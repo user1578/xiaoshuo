@@ -53,10 +53,23 @@ export type Novel = {
   createdAt: string
   updatedAt: string
   cover: CoverStyle
+  coverImagePath?: string | null
   favorite: boolean
 }
 
 export type NovelPayload = Omit<Novel, 'id'>
+
+export type CoverInputFile = {
+  name: string
+  type: string
+  size: number
+  arrayBuffer(): Promise<ArrayBuffer>
+}
+
+export type CoverChange =
+  | { kind: 'keep' }
+  | { kind: 'replace'; file: CoverInputFile }
+  | { kind: 'remove' }
 
 export type FilterState = {
   status: '全部' | ReadStatus

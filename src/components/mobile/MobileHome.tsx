@@ -1,5 +1,5 @@
 import { ChevronRight, Plus, Search, Shuffle } from 'lucide-react'
-import { CoverArt } from '../CoverArt'
+import { NovelCover } from '../NovelCover'
 import type { Novel } from '../../types/novel'
 
 type Stats = { total: number; finished: number; liked: number; abandoned: number }
@@ -13,6 +13,7 @@ export function MobileHome({
   onRefreshRandom,
   onOpenNovel,
   onOpenLibrary,
+  onImport,
   onNew,
 }: {
   stats: Stats
@@ -23,6 +24,7 @@ export function MobileHome({
   onRefreshRandom: () => void
   onOpenNovel: (novel: Novel) => void
   onOpenLibrary: () => void
+  onImport: () => void
   onNew: () => void
 }) {
   const statItems = [
@@ -61,7 +63,7 @@ export function MobileHome({
         </div>
         {randomNovel ? (
           <article className="mobile-random-card">
-            <CoverArt cover={randomNovel.cover} size="wall" />
+            <NovelCover novel={randomNovel} size="wall" />
             <div>
               <h3>{randomNovel.title}</h3>
               <p>{randomNovel.author}</p>
@@ -74,7 +76,7 @@ export function MobileHome({
             </div>
           </article>
         ) : (
-          <div className="mobile-inline-empty">书库还没有小说，先把第一本故事放进袋子里吧。</div>
+          <div className="mobile-inline-empty">书库还没有小说，先把第一本故事放进袋子里吧。<div className="mobile-empty-actions"><button onClick={onImport} type="button">导入现有书库</button><button onClick={onNew} type="button">添加第一本</button></div></div>
         )}
       </section>
 
@@ -89,7 +91,7 @@ export function MobileHome({
         <div className="mobile-recent-list">
           {recentNovels.map((novel) => (
             <button className="mobile-recent-item" key={novel.id} onClick={() => onOpenNovel(novel)} type="button">
-              <CoverArt cover={novel.cover} size="thumb" />
+              <NovelCover novel={novel} size="thumb" />
               <span><strong>{novel.title}</strong><em>{novel.author}</em></span>
               <ChevronRight size={17} />
             </button>

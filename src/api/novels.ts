@@ -1,4 +1,6 @@
-import { isSupabaseDataSource } from './supabaseClient'
+import type { CoverChange, NovelPayload } from '../types/novel'
+import { resolveDataSource } from '../data/dataSource'
+import { loadMobileRepository } from '../data/mobile/mobileLoader'
 import {
   createSupabaseNovel,
   deleteSupabaseNovel,
@@ -14,15 +16,20 @@ const BACKUP_IMPORT_API_URL = 'http://127.0.0.1:3001/api/backup/import'
 const CSV_IMPORT_PREVIEW_API_URL = 'http://127.0.0.1:3001/api/import/csv/preview'
 const CSV_IMPORT_CONFIRM_API_URL = 'http://127.0.0.1:3001/api/import/csv/confirm'
 const CLOUD_READONLY_MESSAGE = '云端模式暂未开放写入'
+const MOBILE_CSV_UNAVAILABLE_MESSAGE = '移动端 CSV 导入导出将在后续版本提供'
 
-function assertLocalWriteEnabled() {
-  if (isSupabaseDataSource()) {
+function assertNodeLocalDataSource() {
+  if (resolveDataSource() === 'supabase') {
     throw new Error(CLOUD_READONLY_MESSAGE)
   }
 }
 
 export async function fetchNovels<TNovel = unknown>(): Promise<TNovel[]> {
-  if (isSupabaseDataSource()) {
+  const dataSource = resolveDataSource()
+  if (dataSource === 'mobile') {
+    return (await (await loadMobileRepository()).fetchNovels()) as TNovel[]
+  }
+  if (dataSource === 'supabase') {
     return fetchSupabaseNovels<TNovel>()
   }
 
@@ -35,12 +42,14 @@ export async function fetchNovels<TNovel = unknown>(): Promise<TNovel[]> {
   return response.json() as Promise<TNovel[]>
 }
 
-export async function createNovel<TNovel = unknown>(payload: unknown): Promise<TNovel> {
-  if (isSupabaseDataSource()) {
+export async function createNovel<TNovel = unknown>(payload: unknown, coverChange?: CoverChange): Promise<TNovel> {
+  const dataSource = resolveDataSource()
+  if (dataSource === 'mobile') {
+    return (await (await loadMobileRepository()).createNovel(payload as NovelPayload, coverChange)) as TNovel
+  }
+  if (dataSource === 'supabase') {
     return createSupabaseNovel<TNovel>(payload as Parameters<typeof createSupabaseNovel>[0])
   }
-
-  assertLocalWriteEnabled()
 
   const response = await fetch(NOVELS_API_URL, {
     body: JSON.stringify(payload),
@@ -57,12 +66,18 @@ export async function createNovel<TNovel = unknown>(payload: unknown): Promise<T
   return response.json() as Promise<TNovel>
 }
 
-export async function updateNovel<TNovel = unknown>(id: number, payload: unknown): Promise<TNovel> {
-  if (isSupabaseDataSource()) {
+export async function updateNovel<TNovel = unknown>(
+  id: number,
+  payload: unknown,
+  coverChange?: CoverChange,
+): Promise<TNovel> {
+  const dataSource = resolveDataSource()
+  if (dataSource === 'mobile') {
+    return (await (await loadMobileRepository()).updateNovel(id, payload as NovelPayload, coverChange)) as TNovel
+  }
+  if (dataSource === 'supabase') {
     return updateSupabaseNovel<TNovel>(id, payload as Parameters<typeof updateSupabaseNovel>[1])
   }
-
-  assertLocalWriteEnabled()
 
   const response = await fetch(`${NOVELS_API_URL}/${id}`, {
     body: JSON.stringify(payload),
@@ -80,11 +95,19 @@ export async function updateNovel<TNovel = unknown>(id: number, payload: unknown
 }
 
 export async function deleteNovel(id: number, options?: { ignoreNotFound?: boolean }): Promise<void> {
-  if (isSupabaseDataSource()) {
+  const dataSource = resolveDataSource()
+  if (dataSource === 'mobile') {
+    try {
+      await (await loadMobileRepository()).deleteNovel(id)
+      return
+    } catch (error) {
+      if (options?.ignoreNotFound && error instanceof Error && error.message.includes('was not found')) return
+      throw error
+    }
+  }
+  if (dataSource === 'supabase') {
     return deleteSupabaseNovel(id, options)
   }
-
-  assertLocalWriteEnabled()
 
   const response = await fetch(`${NOVELS_API_URL}/${id}`, {
     method: 'DELETE',
@@ -100,7 +123,12 @@ export async function deleteNovel(id: number, options?: { ignoreNotFound?: boole
 }
 
 export async function deleteNovels(ids: number[]): Promise<void> {
-  if (isSupabaseDataSource()) {
+  const dataSource = resolveDataSource()
+  if (dataSource === 'mobile') {
+    await (await loadMobileRepository()).deleteNovels(ids)
+    return
+  }
+  if (dataSource === 'supabase') {
     return deleteSupabaseNovels(ids)
   }
 
@@ -122,7 +150,13 @@ export async function deleteNovels(ids: number[]): Promise<void> {
 }
 
 export async function exportNovelBackup<TBackup = unknown>(): Promise<TBackup> {
-  assertLocalWriteEnabled()
+  const dataSource = resolveDataSource()
+  if (dataSource === 'mobile') {
+    return (await (await loadMobileRepository()).exportNovelBackup()) as TBackup
+  }
+  if (dataSource === 'supabase') {
+    throw new Error(CLOUD_READONLY_MESSAGE)
+  }
 
   const response = await fetch(BACKUP_EXPORT_API_URL)
 
@@ -134,7 +168,13 @@ export async function exportNovelBackup<TBackup = unknown>(): Promise<TBackup> {
 }
 
 export async function exportNovelCsv(): Promise<string> {
-  assertLocalWriteEnabled()
+  const dataSource = resolveDataSource()
+  if (dataSource === 'mobile') {
+    throw new Error(MOBILE_CSV_UNAVAILABLE_MESSAGE)
+  }
+  if (dataSource === 'supabase') {
+    throw new Error(CLOUD_READONLY_MESSAGE)
+  }
 
   const response = await fetch(BACKUP_EXPORT_CSV_API_URL)
 
@@ -146,7 +186,13 @@ export async function exportNovelCsv(): Promise<string> {
 }
 
 export async function importNovelBackup<TBackup = unknown>(payload: unknown): Promise<TBackup> {
-  assertLocalWriteEnabled()
+  const dataSource = resolveDataSource()
+  if (dataSource === 'mobile') {
+    return (await (await loadMobileRepository()).importNovelBackup(payload)) as TBackup
+  }
+  if (dataSource === 'supabase') {
+    throw new Error(CLOUD_READONLY_MESSAGE)
+  }
 
   const response = await fetch(BACKUP_IMPORT_API_URL, {
     body: JSON.stringify(payload),
@@ -165,7 +211,7 @@ export async function importNovelBackup<TBackup = unknown>(payload: unknown): Pr
 }
 
 async function postCsvImport<TResponse>(url: string, csv: string): Promise<TResponse> {
-  assertLocalWriteEnabled()
+  assertNodeLocalDataSource()
 
   const response = await fetch(url, {
     body: JSON.stringify({ csv }),
@@ -184,9 +230,41 @@ async function postCsvImport<TResponse>(url: string, csv: string): Promise<TResp
 }
 
 export async function previewCsvImport<TPreview = unknown>(csv: string): Promise<TPreview> {
+  if (resolveDataSource() === 'mobile') {
+    throw new Error(MOBILE_CSV_UNAVAILABLE_MESSAGE)
+  }
   return postCsvImport<TPreview>(CSV_IMPORT_PREVIEW_API_URL, csv)
 }
 
 export async function confirmCsvImport<TImport = unknown>(csv: string): Promise<TImport> {
+  if (resolveDataSource() === 'mobile') {
+    throw new Error(MOBILE_CSV_UNAVAILABLE_MESSAGE)
+  }
   return postCsvImport<TImport>(CSV_IMPORT_CONFIRM_API_URL, csv)
+}
+
+export async function previewNovelBackup<TPreview = unknown>(payload: unknown): Promise<TPreview> {
+  if (resolveDataSource() !== 'mobile') {
+    throw new Error('JSON 备份预览仅在移动端本地书库中提供')
+  }
+  return (await (await loadMobileRepository()).previewNovelBackup(payload)) as TPreview
+}
+
+export async function getMobileLibraryStatus<TStatus = unknown>(): Promise<TStatus> {
+  if (resolveDataSource() !== 'mobile') {
+    throw new Error('本地书库状态仅在移动端提供')
+  }
+  return (await (await loadMobileRepository()).getLibraryStatus()) as TStatus
+}
+
+export async function resolveCustomCoverUri(path: string | null | undefined): Promise<string | null> {
+  if (resolveDataSource() !== 'mobile') return null
+  return (await loadMobileRepository()).resolveCustomCoverUri(path)
+}
+
+export async function shareNovelBackup(): Promise<string> {
+  if (resolveDataSource() !== 'mobile') {
+    throw new Error('系统分享仅在移动端本地书库中提供')
+  }
+  return (await loadMobileRepository()).shareNovelBackup()
 }

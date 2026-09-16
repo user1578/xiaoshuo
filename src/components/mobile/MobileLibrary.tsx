@@ -1,6 +1,6 @@
 import { Check, ChevronRight, Filter, MoreHorizontal, Plus, Search, Trash2, X } from 'lucide-react'
 import { useState } from 'react'
-import { CoverArt } from '../CoverArt'
+import { NovelCover } from '../NovelCover'
 import { mobileLibraryChips } from './mobileNavigation'
 import type { Novel, View } from '../../types/novel'
 
@@ -15,7 +15,7 @@ export function MobileNovelCard({ novel, selecting, selected, onClick, onToggle 
     <article className={selected ? 'mobile-novel-card selected' : 'mobile-novel-card'}>
       {selecting && <button aria-label={`选择 ${novel.title}`} className="mobile-select-toggle" onClick={onToggle} type="button">{selected && <Check size={15} />}</button>}
       <button className="mobile-novel-card-main" onClick={onClick} type="button">
-        <CoverArt cover={novel.cover} size="wall" />
+        <NovelCover novel={novel} size="wall" />
         <span>
           <strong>{novel.title}</strong>
           <em>{novel.author}</em>

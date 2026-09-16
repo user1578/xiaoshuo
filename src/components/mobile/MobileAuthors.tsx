@@ -1,5 +1,5 @@
 import { ChevronLeft, ChevronRight, Heart, Search } from 'lucide-react'
-import { CoverArt } from '../CoverArt'
+import { NovelCover } from '../NovelCover'
 import { MobileNovelCard } from './MobileLibrary'
 import type { Novel } from '../../types/novel'
 
@@ -53,7 +53,7 @@ export function MobileAuthors({
               {item.liked > 0 && <small><Heart size={13} fill="currentColor" /> 喜欢 {item.liked} 本</small>}
             </span>
             <span className="mobile-author-covers" aria-hidden="true">
-              {item.works.slice(0, 3).map((novel) => <CoverArt cover={novel.cover} key={novel.id} size="thumb" />)}
+              {item.works.slice(0, 3).map((novel) => <NovelCover key={novel.id} novel={novel} size="thumb" />)}
             </span>
             <ChevronRight size={18} />
           </button>

@@ -1,6 +1,6 @@
 import { Edit3, Heart, Trash2 } from 'lucide-react'
 import { useState } from 'react'
-import { CoverArt } from '../CoverArt'
+import { NovelCover } from '../NovelCover'
 import type { Novel } from '../../types/novel'
 
 function DetailItem({ label, value }: { label: string; value: string }) {
@@ -36,7 +36,7 @@ export function MobileNovelDetail({
   return (
     <div className="mobile-page mobile-detail-page">
       <section className="mobile-detail-hero">
-        <CoverArt cover={novel.cover} size="detail" />
+        <NovelCover novel={novel} size="detail" />
         <div><h2>{novel.title}</h2><p>{novel.author}</p><span>{novel.favorite && <Heart size={15} fill="currentColor" />} {novel.status} · {novel.rating}</span></div>
       </section>
       <dl className="mobile-detail-list">

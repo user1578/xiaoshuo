@@ -1,10 +1,7 @@
 import { createClient } from '@supabase/supabase-js'
+import { isSupabaseDataSource } from '../data/dataSource'
 
-const SUPABASE_DATA_SOURCE = 'supabase'
-
-export function isSupabaseDataSource() {
-  return import.meta.env.VITE_DATA_SOURCE === SUPABASE_DATA_SOURCE
-}
+export { isSupabaseDataSource } from '../data/dataSource'
 
 function requiredSupabaseEnv(key: 'VITE_SUPABASE_URL' | 'VITE_SUPABASE_ANON_KEY') {
   const value = import.meta.env[key]
@@ -21,7 +18,14 @@ const supabaseAnonKey = isSupabaseDataSource() ? requiredSupabaseEnv('VITE_SUPAB
 
 export const supabase = createClient(supabaseUrl, supabaseAnonKey)
 
+function assertSupabaseDataSource() {
+  if (!isSupabaseDataSource()) {
+    throw new Error('Supabase methods are unavailable outside Web Supabase mode')
+  }
+}
+
 export async function getSupabaseSession() {
+  assertSupabaseDataSource()
   const { data, error } = await supabase.auth.getSession()
 
   if (error) {
@@ -32,6 +36,7 @@ export async function getSupabaseSession() {
 }
 
 export async function signInToSupabase(email: string, password: string) {
+  assertSupabaseDataSource()
   const { data, error } = await supabase.auth.signInWithPassword({ email, password })
 
   if (error) {
@@ -42,6 +47,7 @@ export async function signInToSupabase(email: string, password: string) {
 }
 
 export async function signOutFromSupabase() {
+  assertSupabaseDataSource()
   const { error } = await supabase.auth.signOut()
 
   if (error) {
