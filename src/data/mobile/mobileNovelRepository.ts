@@ -134,52 +134,27 @@ export class MobileNovelRepository {
   }
 
   async createNovel(payload: StoredNovelPayload): Promise<Novel> {
-    const novelId = await this.inTransaction(async () => {
-      const authorId = await this.getOrCreateAuthorId(payload.author)
-      const created = await this.database.run(
-        `INSERT INTO novels (
-          title, author_id, cp_category, ending, status, rating, read_count, notes, cover,
-          cover_image_path, favorite, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [
-          payload.title,
-          authorId,
-          payload.cpCategory,
-          payload.ending,
-          payload.status,
-          payload.rating,
-          payload.readCount,
-          payload.notes,
-          payload.cover,
-          payload.coverImagePath ?? null,
-          payload.favorite ? 1 : 0,
-          payload.createdAt,
-          payload.updatedAt,
-        ],
-      )
-      const id = created.lastInsertRowId
-      if (id === undefined) {
-        throw new Error('SQLite did not return an inserted novel ID')
-      }
-
-      for (const [sortOrder, character] of payload.characters.entries()) {
-        await this.database.run(
-          'INSERT INTO characters (novel_id, name, attribute, sort_order) VALUES (?, ?, ?, ?)',
-          [id, character.name, character.attribute, sortOrder],
-        )
-      }
-      for (const tag of trimmedUnique(payload.tags)) {
-        const tagId = await this.getOrCreateTagId(tag)
-        await this.database.run('INSERT INTO novel_tags (novel_id, tag_id) VALUES (?, ?)', [id, tagId])
-      }
-
-      return id
-    })
+    const novelId = await this.inTransaction(() => this.insertNovel(payload))
     const novel = await this.getNovelById(novelId)
     if (!novel) {
       throw new Error(`Created novel ${novelId} could not be read back`)
     }
     return novel
+  }
+
+  async createNovels(payloads: StoredNovelPayload[]): Promise<Novel[]> {
+    if (payloads.length === 0) return []
+    const ids = await this.inTransaction(async () => {
+      const createdIds: number[] = []
+      for (const payload of payloads) createdIds.push(await this.insertNovel(payload))
+      return createdIds
+    })
+    const byId = new Map((await this.listNovels()).map((novel) => [novel.id, novel]))
+    return ids.map((id) => {
+      const novel = byId.get(id)
+      if (!novel) throw new Error(`Created novel ${id} could not be read back`)
+      return novel
+    })
   }
 
   async getNovelById(id: number): Promise<Novel | null> {
@@ -367,6 +342,44 @@ export class MobileNovelRepository {
     await this.database.execute(
       'DELETE FROM tags WHERE NOT EXISTS (SELECT 1 FROM novel_tags WHERE novel_tags.tag_id = tags.id)',
     )
+  }
+
+  private async insertNovel(payload: StoredNovelPayload): Promise<number> {
+    const authorId = await this.getOrCreateAuthorId(payload.author)
+    const created = await this.database.run(
+      `INSERT INTO novels (
+        title, author_id, cp_category, ending, status, rating, read_count, notes, cover,
+        cover_image_path, favorite, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        payload.title,
+        authorId,
+        payload.cpCategory,
+        payload.ending,
+        payload.status,
+        payload.rating,
+        payload.readCount,
+        payload.notes,
+        payload.cover,
+        payload.coverImagePath ?? null,
+        payload.favorite ? 1 : 0,
+        payload.createdAt,
+        payload.updatedAt,
+      ],
+    )
+    const id = created.lastInsertRowId
+    if (id === undefined) throw new Error('SQLite did not return an inserted novel ID')
+    for (const [sortOrder, character] of payload.characters.entries()) {
+      await this.database.run(
+        'INSERT INTO characters (novel_id, name, attribute, sort_order) VALUES (?, ?, ?, ?)',
+        [id, character.name, character.attribute, sortOrder],
+      )
+    }
+    for (const tag of trimmedUnique(payload.tags)) {
+      const tagId = await this.getOrCreateTagId(tag)
+      await this.database.run('INSERT INTO novel_tags (novel_id, tag_id) VALUES (?, ?)', [id, tagId])
+    }
+    return id
   }
 
   private async insertRestoredNovel(novel: PortableBackupNovel): Promise<number> {

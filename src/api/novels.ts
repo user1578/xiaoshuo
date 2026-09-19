@@ -16,7 +16,6 @@ const BACKUP_IMPORT_API_URL = 'http://127.0.0.1:3001/api/backup/import'
 const CSV_IMPORT_PREVIEW_API_URL = 'http://127.0.0.1:3001/api/import/csv/preview'
 const CSV_IMPORT_CONFIRM_API_URL = 'http://127.0.0.1:3001/api/import/csv/confirm'
 const CLOUD_READONLY_MESSAGE = '云端模式暂未开放写入'
-const MOBILE_CSV_UNAVAILABLE_MESSAGE = '移动端 CSV 导入导出将在后续版本提供'
 
 function assertNodeLocalDataSource() {
   if (resolveDataSource() === 'supabase') {
@@ -170,7 +169,7 @@ export async function exportNovelBackup<TBackup = unknown>(): Promise<TBackup> {
 export async function exportNovelCsv(): Promise<string> {
   const dataSource = resolveDataSource()
   if (dataSource === 'mobile') {
-    throw new Error(MOBILE_CSV_UNAVAILABLE_MESSAGE)
+    return (await (await loadMobileRepository()).shareNovelCsv())
   }
   if (dataSource === 'supabase') {
     throw new Error(CLOUD_READONLY_MESSAGE)
@@ -231,14 +230,14 @@ async function postCsvImport<TResponse>(url: string, csv: string): Promise<TResp
 
 export async function previewCsvImport<TPreview = unknown>(csv: string): Promise<TPreview> {
   if (resolveDataSource() === 'mobile') {
-    throw new Error(MOBILE_CSV_UNAVAILABLE_MESSAGE)
+    return (await (await loadMobileRepository()).previewCsvImport(csv)) as TPreview
   }
   return postCsvImport<TPreview>(CSV_IMPORT_PREVIEW_API_URL, csv)
 }
 
 export async function confirmCsvImport<TImport = unknown>(csv: string): Promise<TImport> {
   if (resolveDataSource() === 'mobile') {
-    throw new Error(MOBILE_CSV_UNAVAILABLE_MESSAGE)
+    return (await (await loadMobileRepository()).confirmCsvImport(csv)) as TImport
   }
   return postCsvImport<TImport>(CSV_IMPORT_CONFIRM_API_URL, csv)
 }

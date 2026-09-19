@@ -1,4 +1,5 @@
 import { runInTransaction } from './db.mjs'
+import { createCsvImportPreview, serializeNovelsCsv } from '../../shared/novelCsv.mjs'
 
 const ENDINGS = new Set(['HE', 'BE', 'OE', '坑', '其他'])
 const CP_CATEGORIES = new Set(['1v1', '无CP', 'NP'])
@@ -175,7 +176,7 @@ function insertNovelRecord(db, novel) {
       novel.readCount ?? 0,
       novel.notes ?? '',
       novel.cover ?? DEFAULT_COVER,
-      novel.favorite ?? 0,
+      toBooleanInteger(novel.favorite),
       createdAt,
       updatedAt,
     )
@@ -526,24 +527,7 @@ function mapNovelToCsvRow(novel) {
 }
 
 export function exportNovelsCsv(db) {
-  const headers = [
-    '\u4e66\u540d',
-    '\u4f5c\u8005',
-    '\u4e3b\u89d21',
-    '\u4e3b\u89d21\u5c5e\u6027',
-    '\u4e3b\u89d22',
-    '\u4e3b\u89d22\u5c5e\u6027',
-    'CP\u7c7b\u522b',
-    '\u7ed3\u5c40',
-    '\u9605\u8bfb\u72b6\u6001',
-    '\u4e2a\u4eba\u8bc4\u4ef7',
-    '\u9605\u8bfb\u6b21\u6570',
-    '\u6807\u7b7e',
-    '\u5907\u6ce8',
-  ]
-  const rows = listNovels(db).map(mapNovelToCsvRow)
-
-  return [headers, ...rows].map((row) => row.map(escapeCsvCell).join(',')).join('\r\n')
+  return serializeNovelsCsv(listNovels(db))
 }
 
 export function listNovels(db) {
@@ -647,11 +631,11 @@ export function importNovelBackup(db, input) {
 }
 
 export function previewCsvImport(db, input) {
-  return buildCsvImportPreview(db, input)
+  return buildSharedCsvImportPreview(db, input)
 }
 
 export function confirmCsvImport(db, input) {
-  const preview = buildCsvImportPreview(db, input)
+  const preview = buildSharedCsvImportPreview(db, input)
   const importableRows = preview.rows.filter((row) => row.status === 'ready')
 
   return runInTransaction(db, () => {
@@ -665,4 +649,13 @@ export function confirmCsvImport(db, input) {
       novels: listNovels(db),
     }
   })
+}
+
+function buildSharedCsvImportPreview(db, input) {
+  try {
+    return createCsvImportPreview(readCsvInput(input), listNovels(db))
+  } catch (error) {
+    if (error && typeof error === 'object' && !('statusCode' in error)) error.statusCode = 400
+    throw error
+  }
 }

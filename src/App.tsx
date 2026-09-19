@@ -35,8 +35,20 @@ import { MobileMoreDrawer } from './components/mobile/MobileMoreDrawer'
 import { MobileNovelDetail } from './components/mobile/MobileNovelDetail'
 import { MobileProfile } from './components/mobile/MobileProfile'
 import { createTemporaryCoverPreview } from './components/mobile/localCoverPreview'
+import {
+  finishSelection,
+  reconcileAvailableIds,
+  replaceSelectionContext,
+  startEmptySelection,
+  startSelectionWith,
+  toggleAllSelection,
+  toggleSelectionId,
+  type NovelSelectionState,
+} from './components/mobile/novelSelection'
+import { resolveMobileBack, type MobileFormSource } from './components/mobile/mobileBack'
 import { detailReturnView, pickNextNovelId } from './components/mobile/mobileState'
 import { MobileTopBar } from './components/mobile/MobileTopBar'
+import { useAndroidBack } from './components/mobile/useAndroidBack'
 import {
   confirmCsvImport,
   exportNovelCsv,
@@ -740,6 +752,19 @@ const emptyFilters: FilterState = {
   tag: '全部',
 }
 
+function filtersAreDefault(filters: FilterState): boolean {
+  return filters.status === emptyFilters.status &&
+    filters.rating === emptyFilters.rating &&
+    filters.characterAttribute === emptyFilters.characterAttribute &&
+    filters.cpCategory === emptyFilters.cpCategory &&
+    filters.ending === emptyFilters.ending &&
+    filters.tag === emptyFilters.tag
+}
+
+function mobileLibraryContextKey(view: View, query: string, filters: FilterState): string {
+  return `library:${view}:${query}:${filters.status}:${filters.rating}:${filters.characterAttribute}:${filters.cpCategory}:${filters.ending}:${filters.tag}`
+}
+
 const developmentDefaultCover: CoverStyle = import.meta.env.DEV ? mockNovels[0]?.cover ?? 'book' : 'book'
 
 function getNavGroups(novels: Novel[]): { title: string; items: NavItem[] }[] {
@@ -859,7 +884,13 @@ function App() {
   const homeRandomNovelIdRef = useRef<number | null>(null)
   const [selectedAuthor, setSelectedAuthor] = useState<{ author: string; works: Novel[] } | null>(null)
   const [detailReturnTo, setDetailReturnTo] = useState<DetailReturnView>('home')
-  const [editReturnTo, setEditReturnTo] = useState<'all' | 'detail'>('all')
+  const [editReturnTo, setEditReturnTo] = useState<View>('all')
+  const [mobileFormSource, setMobileFormSource] = useState<MobileFormSource | null>(null)
+  const [mobileSelection, setMobileSelection] = useState<NovelSelectionState>({
+    contextKey: '',
+    selecting: false,
+    selectedIds: new Set(),
+  })
   const [moreOpen, setMoreOpen] = useState(false)
   const [theme, setTheme] = useState<ThemeId>(() => readStoredTheme(localStorage.getItem('novel-bag-theme')))
   const [mobileLibraryStatus, setMobileLibraryStatus] = useState<{
@@ -894,6 +925,7 @@ function App() {
 
   const applyNovelCollection = useCallback((nextNovels: Novel[]) => {
     setNovels(nextNovels)
+    setMobileSelection((selection) => reconcileAvailableIds(selection, nextNovels.map((novel) => novel.id)))
     setError(null)
 
     const currentRandomId = homeRandomNovelIdRef.current
@@ -1102,17 +1134,95 @@ function App() {
     firstAuthor.author.localeCompare(secondAuthor.author, 'zh-Hans-CN')
   ))
 
+  const currentMobileAuthor = selectedAuthor
+    ? { author: selectedAuthor.author, works: novels.filter((novel) => novel.author === selectedAuthor.author) }
+    : null
+  const mobileSelectionContext = activeView === 'authors' && currentMobileAuthor
+    ? `author:${currentMobileAuthor.author}`
+    : isLibraryView(activeView)
+      ? mobileLibraryContextKey(activeView, query, filters)
+      : `view:${activeView}`
+  const mobileSelectionNovels = activeView === 'authors' && currentMobileAuthor
+    ? currentMobileAuthor.works
+    : isLibraryView(activeView)
+      ? visibleNovels
+      : []
+  const mobileAvailableIdSignature = mobileSelectionNovels.map((novel) => novel.id).join(',')
+
+  const visibleMobileSelection = mobileSelection.contextKey === mobileSelectionContext
+    ? reconcileAvailableIds(mobileSelection, mobileAvailableIdSignature ? mobileAvailableIdSignature.split(',').map(Number) : [])
+    : finishSelection(mobileSelection)
+
   const openEdit = (novel: Novel) => {
     setEditingNovel(novel)
     const openedFromMobileDetail = activeView === 'detail'
     setEditReturnTo(openedFromMobileDetail ? 'detail' : 'all')
+    setMobileFormSource(mobileMode ? (openedFromMobileDetail ? { kind: 'detail' } : null) : null)
     if (!openedFromMobileDetail) {
       setSelectedNovel(null)
     }
     setActiveView('edit')
   }
 
+  const startMobileSelection = () => {
+    setMobileSelection(startEmptySelection(mobileSelectionContext))
+  }
+
+  const startMobileSelectionWith = (id: number) => {
+    setMobileSelection(startSelectionWith(mobileSelectionContext, id, mobileSelectionNovels.map((novel) => novel.id)))
+  }
+
+  const toggleMobileSelection = (id: number) => {
+    setMobileSelection((selection) => selection.contextKey === mobileSelectionContext
+      ? toggleSelectionId(selection, id, mobileSelectionNovels.map((novel) => novel.id))
+      : replaceSelectionContext(selection, mobileSelectionContext))
+  }
+
+  const toggleAllMobileSelection = () => {
+    setMobileSelection((selection) => selection.contextKey === mobileSelectionContext
+      ? toggleAllSelection(selection, mobileSelectionNovels.map((novel) => novel.id))
+      : replaceSelectionContext(selection, mobileSelectionContext))
+  }
+
+  const finishMobileSelection = () => {
+    setMobileSelection((selection) => finishSelection(selection))
+  }
+
+  const updateFilters = (nextFilters: FilterState) => {
+    if (mobileMode) finishMobileSelection()
+    setFilters(nextFilters)
+  }
+
+  const updateMobileQuery = (nextQuery: string) => {
+    finishMobileSelection()
+    setQuery(nextQuery)
+  }
+
+  const openMobileSelectionEdit = () => {
+    const selectedId = [...visibleMobileSelection.selectedIds][0]
+    const novel = mobileSelectionNovels.find((candidate) => candidate.id === selectedId)
+    if (!novel) return
+    setMobileSelection((selection) => finishSelection(selection))
+    setEditingNovel(novel)
+    setSelectedNovel(null)
+    setEditReturnTo(activeView)
+    setMobileFormSource({
+      kind: 'selection-list',
+      returnView: activeView,
+      selectedAuthor: currentMobileAuthor?.author ?? null,
+      query,
+      filtersAreDefault: filtersAreDefault(filters),
+    })
+    setActiveView('edit')
+  }
+
+  const openMobileNew = (returnView: View) => {
+    setMobileFormSource({ kind: 'new', returnView })
+    setActiveView('new')
+  }
+
   const changeActiveView = (view: View) => {
+    setMobileSelection((selection) => finishSelection(selection))
     if (view === 'authors') {
       setSelectedAuthor(null)
     }
@@ -1125,7 +1235,8 @@ function App() {
 
     applyNovelCollection(apiNovels)
     setSelectedNovel(apiNovels.find((novel) => novel.id === createdNovel.id) ?? createdNovel)
-    setActiveView('all')
+    setActiveView(mobileMode && mobileFormSource?.kind === 'new' ? mobileFormSource.returnView : 'all')
+    setMobileFormSource(null)
   }
 
   const handleUpdateNovel = async (id: number, payload: NovelPayload, coverChange?: CoverChange) => {
@@ -1134,8 +1245,14 @@ function App() {
 
     applyNovelCollection(apiNovels)
     const latestNovel = apiNovels.find((novel) => novel.id === updatedNovel.id) ?? updatedNovel
-    setSelectedNovel(latestNovel)
-    setActiveView(editReturnTo)
+    if (mobileMode && mobileFormSource?.kind === 'selection-list') {
+      setSelectedNovel(null)
+      setActiveView(mobileFormSource.returnView)
+    } else {
+      setSelectedNovel(latestNovel)
+      setActiveView(editReturnTo)
+    }
+    setMobileFormSource(null)
   }
 
   const handleDeleteNovel = async (id: number, returnTo?: DetailReturnView) => {
@@ -1149,35 +1266,21 @@ function App() {
     }
   }
 
-  const handleBulkDeleteNovels = async (ids: number[]) => {
-    if (cloudMode) {
-      await deleteNovels(ids)
-      const apiNovels = await fetchNovels<Novel>()
-
-      applyNovelCollection(apiNovels)
-      setSelectedNovel(null)
-      return
-    }
-
-    const deleteResults = await Promise.all(
-      ids.map(async (id) => {
-        try {
-          await deleteNovel(id, { ignoreNotFound: true })
-          return null
-        } catch (deleteError) {
-          return deleteError
-        }
-      }),
-    )
-    const deleteErrors = deleteResults.filter((deleteError) => deleteError !== null)
+  const handleBulkDeleteNovels = async (ids: number[]): Promise<Novel[]> => {
+    await deleteNovels(ids)
     const apiNovels = await fetchNovels<Novel>()
 
     applyNovelCollection(apiNovels)
     setSelectedNovel(null)
+    return apiNovels
+  }
 
-    if (deleteErrors.length > 0) {
-      throw new Error(`批量删除完成，${deleteErrors.length} 本删除失败，请确认后端服务状态`)
+  const deleteMobileSelection = async () => {
+    const remaining = await handleBulkDeleteNovels([...visibleMobileSelection.selectedIds])
+    if (activeView === 'authors' && currentMobileAuthor && !remaining.some((novel) => novel.author === currentMobileAuthor.author)) {
+      setSelectedAuthor(null)
     }
+    finishMobileSelection()
   }
 
   const openRandomNovel = () => {
@@ -1205,6 +1308,78 @@ function App() {
     setSelectedNovel(null)
     setActiveView(detailReturnTo)
   }
+
+  const returnFromMobileForm = (source: MobileFormSource | null = mobileFormSource) => {
+    if (!source) {
+      setActiveView(editReturnTo)
+      return
+    }
+    setMobileFormSource(null)
+    if (source.kind === 'detail') {
+      setActiveView('detail')
+      return
+    }
+    setActiveView(source.returnView)
+  }
+
+  const handleAndroidBack = () => {
+    const action = resolveMobileBack({
+      activeView,
+      moreOpen,
+      filterOpen,
+      aboutOpen,
+      selectionActive: visibleMobileSelection.selecting,
+      formSource: mobileFormSource,
+      detailReturnTo,
+      selectedAuthor: currentMobileAuthor?.author ?? null,
+      query,
+      filtersAreDefault: filtersAreDefault(filters),
+    })
+    if (action.kind === 'close-more') {
+      setMoreOpen(false)
+      return
+    }
+    if (action.kind === 'close-filter') {
+      setFilterOpen(false)
+      return
+    }
+    if (action.kind === 'close-about') {
+      setAboutOpen(false)
+      return
+    }
+    if (action.kind === 'finish-selection') {
+      finishMobileSelection()
+      return
+    }
+    if (action.kind === 'return-form') {
+      returnFromMobileForm(action.source)
+      return
+    }
+    if (action.kind === 'return-detail') {
+      setSelectedNovel(null)
+      setActiveView(action.view)
+      return
+    }
+    if (action.kind === 'clear-author') {
+      setSelectedAuthor(null)
+      return
+    }
+    if (action.kind === 'navigate') {
+      changeActiveView(action.view)
+      return
+    }
+    if (action.kind === 'reset-library') {
+      finishMobileSelection()
+      setActiveView('all')
+      setQuery('')
+      setFilters(emptyFilters)
+      setSelectedAuthor(null)
+      return
+    }
+    void import('@capacitor/app').then(({ App }) => App.exitApp())
+  }
+
+  useAndroidBack(mobileMode, handleAndroidBack)
 
   const retryNovelLoad = async () => {
     setLoading(true)
@@ -1278,10 +1453,10 @@ function App() {
           <MobileTopBar onMore={() => setMoreOpen(true)} subtitle="把喜欢的故事装进口袋" title="小说袋" />
           <MobileHome
             onImport={() => setActiveView('backup')}
-            onNew={() => setActiveView('new')}
+            onNew={() => openMobileNew('all')}
             onOpenLibrary={() => setActiveView('all')}
             onOpenNovel={(novel) => openMobileDetail(novel, 'home')}
-            onQueryChange={setQuery}
+            onQueryChange={updateMobileQuery}
             onRefreshRandom={refreshHomeRandomNovel}
             query={query}
             randomNovel={homeRandomNovel}
@@ -1298,12 +1473,26 @@ function App() {
           <MobileTopBar onMore={() => setMoreOpen(true)} subtitle="按作品数量整理" title="作者档案" />
           <MobileAuthors
             authors={authors}
-            onClearAuthor={() => setSelectedAuthor(null)}
+            onClearAuthor={() => {
+              finishMobileSelection()
+              setSelectedAuthor(null)
+            }}
+            onDeleteSelection={deleteMobileSelection}
+            onEditSelection={openMobileSelectionEdit}
+            onFinishSelection={finishMobileSelection}
             onOpenNovel={(novel) => openMobileDetail(novel, 'authors')}
-            onQueryChange={setQuery}
-            onSelectAuthor={setSelectedAuthor}
+            onQueryChange={updateMobileQuery}
+            onSelectAuthor={(author) => {
+              finishMobileSelection()
+              setSelectedAuthor(author)
+            }}
+            onStartSelection={startMobileSelection}
+            onStartSelectionWith={startMobileSelectionWith}
+            onToggleAll={toggleAllMobileSelection}
+            onToggleSelection={toggleMobileSelection}
             query={query}
-            selectedAuthor={selectedAuthor}
+            selection={visibleMobileSelection}
+            selectedAuthor={currentMobileAuthor}
           />
         </>
       )
@@ -1351,11 +1540,11 @@ function App() {
     }
 
     if (activeView === 'new') {
-      return <><MobileTopBar onBack={() => setActiveView('all')} title="新增小说" /><div className="mobile-page mobile-form-page"><NovelFormView allTags={allTags} fallbackNovel={createBlankNovel()} mode="new" novels={novels} onCancel={() => setActiveView('all')} onCreateNovel={handleCreateNovel} setActiveView={setActiveView} /></div></>
+      return <><MobileTopBar onBack={() => returnFromMobileForm()} title="新增小说" /><div className="mobile-page mobile-form-page"><NovelFormView allTags={allTags} fallbackNovel={createBlankNovel()} mode="new" novels={novels} onCancel={() => returnFromMobileForm()} onCreateNovel={handleCreateNovel} setActiveView={setActiveView} /></div></>
     }
 
     if (activeView === 'edit') {
-      return <><MobileTopBar onBack={() => setActiveView(editReturnTo)} title="编辑小说" /><div className="mobile-page mobile-form-page"><NovelFormView allTags={allTags} fallbackNovel={createBlankNovel()} mode="edit" novel={editingNovel ?? createBlankNovel()} novels={novels} onCancel={() => setActiveView(editReturnTo)} onUpdateNovel={handleUpdateNovel} setActiveView={setActiveView} /></div></>
+      return <><MobileTopBar onBack={() => returnFromMobileForm()} title="编辑小说" /><div className="mobile-page mobile-form-page"><NovelFormView allTags={allTags} fallbackNovel={createBlankNovel()} mode="edit" novel={editingNovel ?? createBlankNovel()} novels={novels} onCancel={() => returnFromMobileForm()} onUpdateNovel={handleUpdateNovel} setActiveView={setActiveView} /></div></>
     }
 
     return (
@@ -1364,14 +1553,21 @@ function App() {
         <MobileLibrary
           activeView={activeView}
           novels={visibleNovels}
-          onBulkDelete={handleBulkDeleteNovels}
+          onDeleteSelection={deleteMobileSelection}
+          onEditSelection={openMobileSelectionEdit}
+          onFinishSelection={finishMobileSelection}
           onNavigate={changeActiveView}
-          onNew={() => setActiveView('new')}
+          onNew={() => openMobileNew(activeView)}
           onOpenFilter={() => setFilterOpen(true)}
           onOpenMore={() => setMoreOpen(true)}
           onOpenNovel={(novel) => openMobileDetail(novel, activeView)}
-          onQueryChange={setQuery}
+          onQueryChange={updateMobileQuery}
+          onStartSelection={startMobileSelection}
+          onStartSelectionWith={startMobileSelectionWith}
+          onToggleAll={toggleAllMobileSelection}
+          onToggleSelection={toggleMobileSelection}
           query={query}
+          selection={visibleMobileSelection}
         />
       </>
     )
@@ -1439,7 +1635,7 @@ function App() {
             <FilterPanel
               filters={filters}
               onClose={() => setFilterOpen(false)}
-              setFilters={setFilters}
+              setFilters={updateFilters}
               tags={allTags}
             />
           )}
@@ -1454,7 +1650,7 @@ function App() {
                 onOpenRandomNovel={openRandomNovel}
                 setActiveView={setActiveView}
                 setCarouselIndex={setCarouselIndex}
-                setFilters={setFilters}
+                setFilters={updateFilters}
                 setSelectedNovel={setSelectedNovel}
                 setWallPage={setWallPage}
                 wallPage={wallPage}
@@ -1468,7 +1664,7 @@ function App() {
                 bulkDeleteEnabled={activeView === 'all'}
                 carouselIndex={carouselIndex}
                 novels={visibleNovels}
-                onBulkDeleteNovels={handleBulkDeleteNovels}
+                onBulkDeleteNovels={async (ids) => { await handleBulkDeleteNovels(ids) }}
                 setCarouselIndex={setCarouselIndex}
                 setSelectedNovel={setSelectedNovel}
                 setWallPage={setWallPage}
@@ -1553,7 +1749,7 @@ function App() {
           <FilterPanel
             filters={filters}
             onClose={() => setFilterOpen(false)}
-            setFilters={setFilters}
+            setFilters={updateFilters}
             tags={allTags}
           />
         )}
@@ -1963,7 +2159,7 @@ function HomeView({
         </div>
       </section>
 
-      <CommonTags commonTags={commonTags} setFilters={setFilters} />
+        <CommonTags commonTags={commonTags} setFilters={setFilters} />
 
       <SpotlightCarousel
         index={carouselIndex}
@@ -2858,10 +3054,13 @@ function BackupView({
     setExportError(null)
 
     try {
+      if (mobileMode) {
+        await exportNovelCsv()
+        return
+      }
       const csv = await exportNovelCsv()
       const today = new Date().toISOString().slice(0, 10)
-      const csvWithBom = csv.startsWith('\uFEFF') ? csv : `\uFEFF${csv}`
-      const blob = new Blob([csvWithBom], { type: 'text/csv;charset=utf-8' })
+      const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' })
       const url = URL.createObjectURL(blob)
       const link = document.createElement('a')
 
@@ -3036,9 +3235,9 @@ function BackupView({
             <button disabled={exporting} onClick={handleExportJson} type="button">
               {exporting ? '导出中' : '导出 JSON'}
             </button>
-            {!mobileMode && <button disabled={exportingCsv} onClick={handleExportCsv} type="button">
+            <button disabled={exportingCsv} onClick={handleExportCsv} type="button">
               {exportingCsv ? '导出中' : '导出 CSV'}
-            </button>}
+            </button>
           </div>
           {exportError && <p role="alert">{exportError}</p>}
           <ul>
@@ -3087,9 +3286,7 @@ function BackupView({
           {importError && <p role="alert">{importError}</p>}
         </article>
 
-        {mobileMode ? (
-          <article className="backup-card import-card"><h3>CSV</h3><p>移动端 CSV 导入导出将在后续版本提供</p></article>
-        ) : <article className="backup-card import-card">
+        <article className="backup-card import-card">
           <h3>导入 CSV</h3>
           <p>选择按固定表头整理的 CSV，先预览校验，确认后写入 SQLite。</p>
           <label className="tag-input">
@@ -3136,7 +3333,7 @@ function BackupView({
           )}
           {csvMessage && <p role="status">{csvMessage}</p>}
           {csvError && <p role="alert">{csvError}</p>}
-        </article>}
+        </article>
       </div>
 
       <div className="backup-lower-grid">

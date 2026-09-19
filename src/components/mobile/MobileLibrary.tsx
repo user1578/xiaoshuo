@@ -1,20 +1,32 @@
-import { Check, ChevronRight, Filter, MoreHorizontal, Plus, Search, Trash2, X } from 'lucide-react'
-import { useState } from 'react'
+import { Check, ChevronRight, Edit3, Filter, MoreHorizontal, Plus, Search, Trash2, X } from 'lucide-react'
 import { NovelCover } from '../NovelCover'
+import { useLongPress } from './longPress'
+import { canEditSelection, type NovelSelectionState } from './novelSelection'
 import { mobileLibraryChips } from './mobileNavigation'
 import type { Novel, View } from '../../types/novel'
 
-export function MobileNovelCard({ novel, selecting, selected, onClick, onToggle }: {
+export function MobileNovelCard({ novel, selecting, selected, onClick, onToggle, onLongPress }: {
   novel: Novel
   selecting?: boolean
   selected?: boolean
   onClick: () => void
   onToggle?: () => void
+  onLongPress?: () => void
 }) {
+  const longPress = useLongPress(onLongPress ?? (() => undefined))
   return (
     <article className={selected ? 'mobile-novel-card selected' : 'mobile-novel-card'}>
       {selecting && <button aria-label={`选择 ${novel.title}`} className="mobile-select-toggle" onClick={onToggle} type="button">{selected && <Check size={15} />}</button>}
-      <button className="mobile-novel-card-main" onClick={onClick} type="button">
+      <button
+        className="mobile-novel-card-main"
+        onClick={onClick}
+        onClickCapture={longPress.onClickCapture}
+        onPointerCancel={longPress.onPointerCancel}
+        onPointerDown={longPress.onPointerDown}
+        onPointerMove={longPress.onPointerMove}
+        onPointerUp={longPress.onPointerUp}
+        type="button"
+      >
         <NovelCover novel={novel} size="wall" />
         <span>
           <strong>{novel.title}</strong>
@@ -32,29 +44,39 @@ export function MobileLibrary({
   activeView,
   novels,
   query,
+  selection,
   onQueryChange,
   onNavigate,
   onOpenNovel,
   onOpenFilter,
   onOpenMore,
   onNew,
-  onBulkDelete,
+  onStartSelection,
+  onStartSelectionWith,
+  onToggleSelection,
+  onToggleAll,
+  onFinishSelection,
+  onEditSelection,
+  onDeleteSelection,
 }: {
   activeView: View
   novels: Novel[]
   query: string
+  selection: NovelSelectionState
   onQueryChange: (value: string) => void
   onNavigate: (view: View) => void
   onOpenNovel: (novel: Novel) => void
   onOpenFilter: () => void
   onOpenMore: () => void
   onNew: () => void
-  onBulkDelete: (ids: number[]) => Promise<void>
+  onStartSelection: () => void
+  onStartSelectionWith: (id: number) => void
+  onToggleSelection: (id: number) => void
+  onToggleAll: () => void
+  onFinishSelection: () => void
+  onEditSelection: () => void
+  onDeleteSelection: () => Promise<void>
 }) {
-  const [selecting, setSelecting] = useState(false)
-  const [selectedIds, setSelectedIds] = useState<number[]>([])
-  const [deleting, setDeleting] = useState(false)
-  const [deleteError, setDeleteError] = useState<string | null>(null)
   const libraryTitle = activeView === 'all'
     ? '我的书库'
     : activeView === 'recent'
@@ -66,26 +88,12 @@ export function MobileLibrary({
           : activeView === 'abandoned'
             ? '弃文'
             : '全部小说'
-
-  const toggleSelected = (id: number) => setSelectedIds((ids) => ids.includes(id) ? ids.filter((item) => item !== id) : [...ids, id])
-  const closeSelection = () => {
-    setSelecting(false)
-    setSelectedIds([])
-    setDeleteError(null)
-  }
+  const selectedCount = selection.selectedIds.size
+  const allSelected = novels.length > 0 && novels.every((novel) => selection.selectedIds.has(novel.id))
 
   const deleteSelected = async () => {
-    if (selectedIds.length === 0 || !window.confirm(`确认删除选中的 ${selectedIds.length} 本小说吗？`)) return
-    setDeleting(true)
-    setDeleteError(null)
-    try {
-      await onBulkDelete(selectedIds)
-      closeSelection()
-    } catch (error) {
-      setDeleteError(error instanceof Error ? error.message : '批量删除失败，请稍后重试')
-    } finally {
-      setDeleting(false)
-    }
+    if (selectedCount === 0 || !window.confirm(`确定删除已选择的 ${selectedCount} 本小说吗？`)) return
+    await onDeleteSelection()
   }
 
   return (
@@ -103,24 +111,26 @@ export function MobileLibrary({
         {mobileLibraryChips.map((chip) => <button className={activeView === chip.id ? 'active' : ''} key={chip.id} onClick={() => onNavigate(chip.id)} type="button">{chip.label}</button>)}
       </div>
       <div className="mobile-library-actions">
-        {selecting ? (
+        {selection.selecting ? (
           <>
-            <span>已选 {selectedIds.length} 本</span>
-            <button className="mobile-text-button danger" disabled={selectedIds.length === 0 || deleting} onClick={deleteSelected} type="button"><Trash2 size={15} />{deleting ? '删除中' : '删除'}</button>
-            <button aria-label="退出批量管理" className="mobile-icon-button" onClick={closeSelection} type="button"><X size={18} /></button>
+            <span>已选择 {selectedCount} 本</span>
+            <button className="mobile-text-button" onClick={onToggleAll} type="button">{allSelected ? '取消全选' : '全选'}</button>
+            {canEditSelection(selection) && <button className="mobile-text-button" onClick={onEditSelection} type="button"><Edit3 size={15} />编辑</button>}
+            <button className="mobile-text-button danger" disabled={selectedCount === 0} onClick={() => void deleteSelected()} type="button"><Trash2 size={15} />删除</button>
+            <button aria-label="完成选择" className="mobile-icon-button" onClick={onFinishSelection} type="button"><X size={18} /></button>
           </>
-        ) : <button className="mobile-text-button" onClick={() => setSelecting(true)} type="button">批量管理</button>}
+        ) : <button className="mobile-text-button" onClick={onStartSelection} type="button">选择</button>}
       </div>
-      {deleteError && <p className="mobile-action-error" role="alert">{deleteError}</p>}
       <div className="mobile-novel-list">
         {novels.map((novel) => (
           <MobileNovelCard
             key={novel.id}
             novel={novel}
-            onClick={() => selecting ? toggleSelected(novel.id) : onOpenNovel(novel)}
-            onToggle={() => toggleSelected(novel.id)}
-            selected={selectedIds.includes(novel.id)}
-            selecting={selecting}
+            onClick={() => selection.selecting ? onToggleSelection(novel.id) : onOpenNovel(novel)}
+            onLongPress={() => onStartSelectionWith(novel.id)}
+            onToggle={() => onToggleSelection(novel.id)}
+            selected={selection.selectedIds.has(novel.id)}
+            selecting={selection.selecting}
           />
         ))}
         {novels.length === 0 && <div className="mobile-inline-empty">没有符合当前搜索或筛选条件的小说。</div>}

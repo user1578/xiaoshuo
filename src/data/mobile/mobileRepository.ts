@@ -1,6 +1,7 @@
 import { Directory, Encoding, Filesystem } from '@capacitor/filesystem'
 import { Share } from '@capacitor/share'
 import type { CoverChange, Novel, NovelPayload } from '../../types/novel'
+import { createCsvImportPreview, serializeNovelsCsv, type CsvImportPreview } from '../../../shared/novelCsv.mjs'
 import {
   exportMobileBackup,
   previewMobileBackup,
@@ -16,6 +17,7 @@ import { MobileNovelRepository, type MobileDeleteResult, type StoredNovelPayload
 
 type MobileNovelStore = Pick<
   MobileNovelRepository,
+  | 'createNovels'
   | 'createNovel'
   | 'deleteNovel'
   | 'deleteNovels'
@@ -41,8 +43,11 @@ export type MobileRepository = {
   getLibraryStatus(): ReturnType<MobileNovelRepository['getLibraryStatus']>
   previewNovelBackup(raw: unknown): Promise<MobileBackupPreview>
   importNovelBackup(raw: unknown): Promise<MobileBackupRestoreResult>
+  previewCsvImport(csv: string): Promise<CsvImportPreview>
+  confirmCsvImport(csv: string): Promise<{ importedAt: string; importedCount: number; duplicateCount: number; errorCount: number; novels: Novel[] }>
   exportNovelBackup(): Promise<PortableNovelBackup>
   shareNovelBackup(): Promise<string>
+  shareNovelCsv(): Promise<string>
   resolveCustomCoverUri(path: string | null | undefined): Promise<string | null>
 }
 
@@ -88,6 +93,19 @@ export function createMobileRepository(dependencies: MobileRepositoryDependencie
     await dependencies.filesystem.writeFile({
       path,
       data: JSON.stringify(backup, null, 2),
+      directory: Directory.Cache,
+      encoding: Encoding.UTF8,
+      recursive: true,
+    })
+    return (await dependencies.filesystem.getUri({ path, directory: Directory.Cache })).uri
+  }
+
+  const writeCsvForSharing = async (): Promise<string> => {
+    const date = new Date().toISOString().slice(0, 10)
+    const path = `novel-export-${date}.csv`
+    await dependencies.filesystem.writeFile({
+      path,
+      data: serializeNovelsCsv(await dependencies.novels.listNovels()),
       directory: Directory.Cache,
       encoding: Encoding.UTF8,
       recursive: true,
@@ -151,6 +169,23 @@ export function createMobileRepository(dependencies: MobileRepositoryDependencie
       return result
     },
 
+    async previewCsvImport(csv) {
+      return createCsvImportPreview(csv, await dependencies.novels.listNovels())
+    },
+
+    async confirmCsvImport(csv) {
+      const preview = createCsvImportPreview(csv, await dependencies.novels.listNovels())
+      const ready = preview.rows.filter((row) => row.status === 'ready').map((row) => row.novel as StoredNovelPayload)
+      await dependencies.novels.createNovels(ready)
+      return {
+        importedAt: new Date().toISOString(),
+        importedCount: ready.length,
+        duplicateCount: preview.duplicateCount,
+        errorCount: preview.errorCount,
+        novels: await dependencies.novels.listNovels(),
+      }
+    },
+
     exportNovelBackup: () => exportMobileBackup(dependencies.novels),
 
     async shareNovelBackup() {
@@ -159,6 +194,16 @@ export function createMobileRepository(dependencies: MobileRepositoryDependencie
       await dependencies.share.share({
         title: '小说袋数据备份',
         dialogTitle: '分享小说袋数据备份',
+        files: [uri],
+      })
+      return uri
+    },
+
+    async shareNovelCsv() {
+      const uri = await writeCsvForSharing()
+      await dependencies.share.share({
+        title: '小说袋 CSV 导出',
+        dialogTitle: '分享小说袋 CSV 导出',
         files: [uri],
       })
       return uri
