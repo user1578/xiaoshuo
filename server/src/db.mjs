@@ -3,12 +3,13 @@ import { readFileSync } from 'node:fs'
 import { mkdir } from 'node:fs/promises'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
+import { resolveDatabasePath } from './databasePath.mjs'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const serverRoot = resolve(__dirname, '..')
 const schemaPath = resolve(__dirname, 'schema.sql')
 
-export const databasePath = resolve(serverRoot, 'data', 'novels.db')
+export const databasePath = resolveDatabasePath(process.env.NOVEL_BAG_DB_PATH, serverRoot)
 
 export async function ensureDataDirectory() {
   await mkdir(dirname(databasePath), { recursive: true })

@@ -21,6 +21,17 @@ server/data/*.db
 server/data/*.db-shm
 server/data/*.db-wal
 
+# Android local/build artifacts
+android/local.properties
+android/.gradle/
+android/build/
+android/app/build/
+*.keystore
+*.jks
+android/**/*.db
+android/**/*.db-shm
+android/**/*.db-wal
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

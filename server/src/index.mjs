@@ -44,7 +44,7 @@ function sendCsv(res, csv) {
     'Content-Disposition': `attachment; filename="novel-export-${today}.csv"`,
     'Content-Type': 'text/csv; charset=utf-8',
   })
-  res.end(`\uFEFF${csv}`)
+  res.end(csv)
 }
 
 function parseNovelId(pathname) {
