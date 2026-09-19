@@ -1,0 +1,108 @@
+name: Build Android APK
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-apk:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v7
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install Node.js dependencies
+        run: npm ci
+
+      - name: Run tests
+        run: npm test
+
+      - name: Run lint
+        run: npm run lint
+
+      - name: Build web assets
+        run: npm run build
+
+      - name: Set up Java
+        uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: gradle
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v4
+        with:
+          packages: "platform-tools platforms;android-36 build-tools;36.0.0"
+          log-accepted-android-sdk-licenses: "false"
+
+      - name: Sync Capacitor Android project
+        run: npx cap sync android
+
+      - name: Restore and validate CI signing keystore
+        env:
+          NOVELBAG_KEYSTORE_BASE64: ${{ secrets.NOVELBAG_KEYSTORE_BASE64 }}
+          NOVELBAG_KEYSTORE_PASSWORD: ${{ secrets.NOVELBAG_KEYSTORE_PASSWORD }}
+          NOVELBAG_KEY_ALIAS: ${{ secrets.NOVELBAG_KEY_ALIAS }}
+          NOVELBAG_KEY_PASSWORD: ${{ secrets.NOVELBAG_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          : "${NOVELBAG_KEYSTORE_BASE64:?NOVELBAG_KEYSTORE_BASE64 is required}"
+          : "${NOVELBAG_KEYSTORE_PASSWORD:?NOVELBAG_KEYSTORE_PASSWORD is required}"
+          : "${NOVELBAG_KEY_ALIAS:?NOVELBAG_KEY_ALIAS is required}"
+          : "${NOVELBAG_KEY_PASSWORD:?NOVELBAG_KEY_PASSWORD is required}"
+          keystore_path="$RUNNER_TEMP/novelbag-ci.jks"
+          printf '%s' "$NOVELBAG_KEYSTORE_BASE64" | base64 --decode > "$keystore_path"
+          test -f "$keystore_path"
+          test -s "$keystore_path"
+          printf '%s\n' "$NOVELBAG_KEYSTORE_PASSWORD" | keytool -list -keystore "$keystore_path" -alias "$NOVELBAG_KEY_ALIAS" > /dev/null
+          printf 'NOVELBAG_KEYSTORE_PATH=%s\n' "$keystore_path" >> "$GITHUB_ENV"
+
+      - name: Build signed release APK
+        env:
+          NOVELBAG_KEYSTORE_PASSWORD: ${{ secrets.NOVELBAG_KEYSTORE_PASSWORD }}
+          NOVELBAG_KEY_ALIAS: ${{ secrets.NOVELBAG_KEY_ALIAS }}
+          NOVELBAG_KEY_PASSWORD: ${{ secrets.NOVELBAG_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          : "${NOVELBAG_KEYSTORE_PATH:?NOVELBAG_KEYSTORE_PATH is required}"
+          : "${NOVELBAG_KEYSTORE_PASSWORD:?NOVELBAG_KEYSTORE_PASSWORD is required}"
+          : "${NOVELBAG_KEY_ALIAS:?NOVELBAG_KEY_ALIAS is required}"
+          : "${NOVELBAG_KEY_PASSWORD:?NOVELBAG_KEY_PASSWORD is required}"
+          ./gradlew --no-daemon assembleRelease
+        working-directory: android
+
+      - name: Verify signed release APK
+        run: |
+          set -euo pipefail
+          source_apk='android/app/build/outputs/apk/release/app-release.apk'
+          test -f "$source_apk"
+          test -s "$source_apk"
+          apksigner_path="$ANDROID_SDK_ROOT/build-tools/36.0.0/apksigner"
+          test -x "$apksigner_path"
+          "$apksigner_path" verify --print-certs "$source_apk"
+
+      - name: Stage and hash APK artifact
+        run: |
+          set -euo pipefail
+          source_apk='android/app/build/outputs/apk/release/app-release.apk'
+          test -f "$source_apk"
+          cp "$source_apk" "$RUNNER_TEMP/novelbag.apk"
+          sha256sum "$RUNNER_TEMP/novelbag.apk"
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: novelbag-android-apk
+          path: ${{ runner.temp }}/novelbag.apk
+          if-no-files-found: error

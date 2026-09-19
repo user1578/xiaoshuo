@@ -1,5 +1,16 @@
 apply plugin: 'com.android.application'
 
+def ciKeystorePath = System.getenv('NOVELBAG_KEYSTORE_PATH')
+def ciKeystorePassword = System.getenv('NOVELBAG_KEYSTORE_PASSWORD')
+def ciKeyAlias = System.getenv('NOVELBAG_KEY_ALIAS')
+def ciKeyPassword = System.getenv('NOVELBAG_KEY_PASSWORD')
+def ciSigningConfigured = [
+    ciKeystorePath,
+    ciKeystorePassword,
+    ciKeyAlias,
+    ciKeyPassword,
+].every { value -> value?.trim() }
+
 android {
     namespace = "com.novelbag.app"
     compileSdk = rootProject.ext.compileSdkVersion
@@ -16,10 +27,23 @@ android {
             ignoreAssetsPattern = '!.svn:!.git:!.ds_store:!*.scc:.*:!CVS:!thumbs.db:!picasa.ini:!*~'
         }
     }
+    signingConfigs {
+        release {
+            if (ciSigningConfigured) {
+                storeFile file(ciKeystorePath)
+                storePassword ciKeystorePassword
+                keyAlias ciKeyAlias
+                keyPassword ciKeyPassword
+            }
+        }
+    }
     buildTypes {
         release {
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
+            if (ciSigningConfigured) {
+                signingConfig signingConfigs.release
+            }
         }
     }
 }
