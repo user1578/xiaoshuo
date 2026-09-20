@@ -79,6 +79,7 @@ jobs:
           : "${NOVELBAG_KEYSTORE_PASSWORD:?NOVELBAG_KEYSTORE_PASSWORD is required}"
           : "${NOVELBAG_KEY_ALIAS:?NOVELBAG_KEY_ALIAS is required}"
           : "${NOVELBAG_KEY_PASSWORD:?NOVELBAG_KEY_PASSWORD is required}"
+          chmod +x gradlew
           ./gradlew --no-daemon assembleRelease
         working-directory: android
 
