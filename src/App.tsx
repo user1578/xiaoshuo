@@ -34,6 +34,7 @@ import { MobileLibrary } from './components/mobile/MobileLibrary'
 import { MobileMoreDrawer } from './components/mobile/MobileMoreDrawer'
 import { MobileNovelDetail } from './components/mobile/MobileNovelDetail'
 import { MobileProfile } from './components/mobile/MobileProfile'
+import { MobileCsvImport } from './components/mobile/MobileCsvImport'
 import { createTemporaryCoverPreview } from './components/mobile/localCoverPreview'
 import {
   finishSelection,
@@ -3286,7 +3287,7 @@ function BackupView({
           {importError && <p role="alert">{importError}</p>}
         </article>
 
-        <article className="backup-card import-card">
+        {mobileMode ? <MobileCsvImport onReloadNovels={onReloadNovels} /> : <article className="backup-card import-card">
           <h3>导入 CSV</h3>
           <p>选择按固定表头整理的 CSV，先预览校验，确认后写入 SQLite。</p>
           <label className="tag-input">
@@ -3333,7 +3334,7 @@ function BackupView({
           )}
           {csvMessage && <p role="status">{csvMessage}</p>}
           {csvError && <p role="alert">{csvError}</p>}
-        </article>
+        </article>}
       </div>
 
       <div className="backup-lower-grid">

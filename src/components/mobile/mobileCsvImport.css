@@ -1,0 +1,144 @@
+.csv-import-panel {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.csv-import-panel fieldset {
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.csv-import-panel input,
+.csv-import-panel select,
+.csv-import-panel textarea {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  min-height: 44px;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text);
+  background: var(--surface);
+  font: inherit;
+}
+
+.csv-import-panel button {
+  min-height: 44px;
+  max-width: 100%;
+  white-space: normal;
+}
+
+.csv-import-panel button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.csv-import-panel label,
+.csv-session,
+.csv-issue-groups,
+.csv-row-editor,
+.csv-mapping-controls {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+}
+
+.csv-session {
+  margin-top: 16px;
+}
+
+.csv-import-panel .csv-totals {
+  padding: 12px;
+  border-radius: 10px;
+  color: var(--text-strong);
+  background: var(--surface);
+  line-height: 1.8;
+}
+
+.csv-tabs {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.csv-import-panel .csv-tabs button {
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border);
+}
+
+.csv-import-panel .csv-tabs button[aria-pressed='true'] {
+  color: var(--surface);
+  background: var(--accent);
+}
+
+.csv-import-panel .csv-rows {
+  display: grid;
+  gap: 12px;
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.csv-row,
+.csv-issue-group {
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+}
+
+.csv-row-heading,
+.csv-pagination {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.csv-import-panel .csv-row p,
+.csv-import-panel .csv-issue-group p {
+  margin: 8px 0;
+}
+
+.csv-issue {
+  padding: 8px 0;
+  border-top: 1px solid var(--border);
+}
+
+.csv-issue strong,
+.csv-row-editor em {
+  color: var(--danger);
+}
+
+.csv-value,
+.csv-message {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.csv-row-editor,
+.csv-mapping-controls,
+.csv-confirm {
+  margin-top: 12px;
+}
+
+.csv-import-panel summary {
+  padding: 12px 0;
+  cursor: pointer;
+}
+
+.csv-mappings {
+  max-height: 260px;
+  overflow-y: auto;
+}
+
+.csv-confirm button {
+  width: 100%;
+}

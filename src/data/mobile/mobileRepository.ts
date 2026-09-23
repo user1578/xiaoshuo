@@ -1,7 +1,7 @@
 import { Directory, Encoding, Filesystem } from '@capacitor/filesystem'
 import { Share } from '@capacitor/share'
 import type { CoverChange, Novel, NovelPayload } from '../../types/novel'
-import { createCsvImportPreview, serializeNovelsCsv, type CsvImportPreview } from '../../../shared/novelCsv.mjs'
+import { createCsvImportSession, revalidateCsvImportRows, serializeNovelsCsv, type CsvDraftInput, type CsvImportSession } from '../../../shared/novelCsv.mjs'
 import {
   exportMobileBackup,
   previewMobileBackup,
@@ -34,6 +34,8 @@ type MobileCoverStore = Pick<MobileCoverStorage, 'deleteIfUnreferenced' | 'resol
 type BackupFilesystem = Pick<typeof Filesystem, 'getUri' | 'writeFile'>
 type ShareAdapter = Pick<typeof Share, 'share'>
 
+export type MobileCsvImportResult = { importedAt: string; importedCount: number; duplicateCount: number; errorCount: number; skippedCount: number; novels: Novel[] }
+
 export type MobileRepository = {
   fetchNovels(): Promise<Novel[]>
   createNovel(payload: NovelPayload, coverChange?: CoverChange): Promise<Novel>
@@ -43,8 +45,10 @@ export type MobileRepository = {
   getLibraryStatus(): ReturnType<MobileNovelRepository['getLibraryStatus']>
   previewNovelBackup(raw: unknown): Promise<MobileBackupPreview>
   importNovelBackup(raw: unknown): Promise<MobileBackupRestoreResult>
-  previewCsvImport(csv: string): Promise<CsvImportPreview>
-  confirmCsvImport(csv: string): Promise<{ importedAt: string; importedCount: number; duplicateCount: number; errorCount: number; novels: Novel[] }>
+  previewCsvImport(csv: string): Promise<CsvImportSession>
+  confirmCsvImport(csv: string): Promise<MobileCsvImportResult>
+  previewCsvCorrections(rows: CsvDraftInput[]): Promise<CsvImportSession>
+  confirmCsvCorrections(rows: CsvDraftInput[]): Promise<MobileCsvImportResult>
   exportNovelBackup(): Promise<PortableNovelBackup>
   shareNovelBackup(): Promise<string>
   shareNovelCsv(): Promise<string>
@@ -67,6 +71,19 @@ function errorMessage(error: unknown): string {
 }
 
 export function createMobileRepository(dependencies: MobileRepositoryDependencies): MobileRepository {
+  const importCsvPreview = async (preview: CsvImportSession): Promise<MobileCsvImportResult> => {
+    const ready = preview.rows.filter((row) => !row.skipped && row.status === 'ready').map((row) => row.novel as StoredNovelPayload)
+    await dependencies.novels.createNovels(ready)
+    return {
+      importedAt: new Date().toISOString(),
+      importedCount: ready.length,
+      duplicateCount: preview.duplicateCount,
+      errorCount: preview.errorCount,
+      skippedCount: preview.skippedCount,
+      novels: await dependencies.novels.listNovels(),
+    }
+  }
+
   const cleanupReleasedPaths = async (paths: string[]): Promise<void> => {
     await Promise.all(
       paths.map(async (path) => {
@@ -170,20 +187,20 @@ export function createMobileRepository(dependencies: MobileRepositoryDependencie
     },
 
     async previewCsvImport(csv) {
-      return createCsvImportPreview(csv, await dependencies.novels.listNovels())
+      return createCsvImportSession(csv, await dependencies.novels.listNovels())
     },
 
     async confirmCsvImport(csv) {
-      const preview = createCsvImportPreview(csv, await dependencies.novels.listNovels())
-      const ready = preview.rows.filter((row) => row.status === 'ready').map((row) => row.novel as StoredNovelPayload)
-      await dependencies.novels.createNovels(ready)
-      return {
-        importedAt: new Date().toISOString(),
-        importedCount: ready.length,
-        duplicateCount: preview.duplicateCount,
-        errorCount: preview.errorCount,
-        novels: await dependencies.novels.listNovels(),
-      }
+      return importCsvPreview(createCsvImportSession(csv, await dependencies.novels.listNovels()))
+    },
+
+    async previewCsvCorrections(rows) {
+      return revalidateCsvImportRows(rows, await dependencies.novels.listNovels())
+    },
+
+    async confirmCsvCorrections(rows) {
+      // Rebuild from raw cells + explicit corrections; never trust UI payloads or statuses.
+      return importCsvPreview(revalidateCsvImportRows(rows, await dependencies.novels.listNovels()))
     },
 
     exportNovelBackup: () => exportMobileBackup(dependencies.novels),

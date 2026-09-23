@@ -3,6 +3,7 @@ import { createMobileRepository } from './mobileRepository'
 import { enableMobileForeignKeys, migrateMobileDatabase } from './mobileMigrations'
 import { MobileNovelRepository, type StoredNovelPayload } from './mobileNovelRepository'
 import { NodeMobileDatabase } from './testSupport/nodeMobileDatabase'
+import { correctCsvImportRow, createCsvImportSession, setCsvImportRowSkipped } from '../../../shared/novelCsv.mjs'
 
 const headers = '书名,作者,主角1,主角1属性,主角2,主角2属性,CP类别,结局,阅读状态,个人评价,阅读次数,标签,备注'
 const csv = `${headers}\nCSV 新书,CSV 作者,主角,1,,,,,,,2,标签,备注`
@@ -40,6 +41,50 @@ function mobileRepository(novels: MobileNovelRepository) {
 }
 
 describe('mobile CSV repository', () => {
+  it('imports corrected rows only with disjoint counts and a single SQLite transaction', async () => {
+    const { novels, database } = await createStore()
+    const { repository } = mobileRepository(novels)
+    const generated = (title: string, rating = '喜欢') => `${title},生成作者,主角,1,,,1v1,HE,看完,${rating},1,,`
+    let session = createCsvImportSession(`${headers}\n${[
+      ...Array.from({ length: 10 }, (_, i) => generated(`书${i}`)),
+      ...Array.from({ length: 3 }, (_, i) => generated(`书${i}`)),
+      ...Array.from({ length: 6 }, (_, i) => generated(`错误${i}`, '非法')),
+    ].join('\n')}`, [])
+    session = correctCsvImportRow(session, 15, { rating: '喜欢' })
+    session = correctCsvImportRow(session, 16, { rating: '一般' })
+    session = setCsvImportRowSkipped(session, 19, true)
+    session = setCsvImportRowSkipped(session, 20, true)
+    const callsBefore = database.calls.length
+    const result = await repository.confirmCsvCorrections(session.rows)
+    expect(result).toMatchObject({ importedCount: 12, duplicateCount: 3, errorCount: 2, skippedCount: 2 })
+    expect(result.novels).toHaveLength(12)
+    expect(result.novels.find((novel) => novel.title === '错误1')?.rating).toBe('一般')
+    expect(database.calls.slice(callsBefore).filter((sql) => sql === 'BEGIN TRANSACTION')).toHaveLength(1)
+    expect(database.calls.slice(callsBefore).filter((sql) => sql === 'COMMIT')).toHaveLength(1)
+  })
+
+  it('rechecks corrected titles against current SQLite and never trusts a forged valid payload', async () => {
+    const { novels } = await createStore()
+    const { repository } = mobileRepository(novels)
+    const session = correctCsvImportRow(createCsvImportSession(csv, []), 2, { title: '修正后的书' })
+    await expect(repository.previewCsvCorrections(session.rows)).resolves.toMatchObject({ importableCount: 1 })
+    expect(await novels.listNovels()).toEqual([])
+    await novels.createNovel(payload({ title: '修正后的书', author: 'CSV 作者' }))
+    await expect(repository.previewCsvCorrections(session.rows)).resolves.toMatchObject({ duplicateCount: 1, importableCount: 0 })
+    await expect(repository.confirmCsvCorrections(session.rows)).resolves.toMatchObject({ importedCount: 0, duplicateCount: 1 })
+    const forged = session.rows.map((row) => ({ ...row, corrections: { rating: '非法' }, status: 'ready' as const, issues: [], errors: [] }))
+    await expect(repository.confirmCsvCorrections(forged)).resolves.toMatchObject({ importedCount: 0, errorCount: 1 })
+    expect(await novels.getLibraryStatus()).toMatchObject({ novelCount: 1 })
+  })
+
+  it('rolls back corrected CSV imports as a whole on a write failure', async () => {
+    const { novels } = await createStore({ failWhenSqlIncludes: 'INSERT INTO characters' })
+    const { repository } = mobileRepository(novels)
+    const session = createCsvImportSession(csv, [])
+    await expect(repository.confirmCsvCorrections(session.rows)).rejects.toThrow('Mobile SQLite transaction failed')
+    expect(await novels.getLibraryStatus()).toMatchObject({ novelCount: 0 })
+  })
+
   it('previews from SQLite without writing and confirms only ready rows', async () => {
     const { novels } = await createStore()
     const { repository } = mobileRepository(novels)

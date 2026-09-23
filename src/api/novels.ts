@@ -1,6 +1,7 @@
 import type { CoverChange, NovelPayload } from '../types/novel'
 import { resolveDataSource } from '../data/dataSource'
 import { loadMobileRepository } from '../data/mobile/mobileLoader'
+import type { CsvDraftInput } from '../../shared/novelCsv.mjs'
 import {
   createSupabaseNovel,
   deleteSupabaseNovel,
@@ -240,6 +241,16 @@ export async function confirmCsvImport<TImport = unknown>(csv: string): Promise<
     return (await (await loadMobileRepository()).confirmCsvImport(csv)) as TImport
   }
   return postCsvImport<TImport>(CSV_IMPORT_CONFIRM_API_URL, csv)
+}
+
+export async function previewCsvCorrections(rows: CsvDraftInput[]) {
+  if (resolveDataSource() !== 'mobile') throw new Error('CSV 人工修正仅在移动端本地书库中提供')
+  return (await loadMobileRepository()).previewCsvCorrections(rows)
+}
+
+export async function confirmCsvCorrections(rows: CsvDraftInput[]) {
+  if (resolveDataSource() !== 'mobile') throw new Error('CSV 人工修正仅在移动端本地书库中提供')
+  return (await loadMobileRepository()).confirmCsvCorrections(rows)
 }
 
 export async function previewNovelBackup<TPreview = unknown>(payload: unknown): Promise<TPreview> {
