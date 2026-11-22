@@ -41,6 +41,16 @@ async function createRepositoryContext(): Promise<{
 }
 
 describe('MobileNovelRepository create/list round trips', () => {
+  it('lists restored and edited records by descending ID', async () => {
+    const repository = await createRepositoryForTest()
+    await repository.replaceAllFromBackup([3, 1, 5, 2].map((id) => ({ id, ...makeNovelPayload({ title: `Generated ${id}` }) })))
+
+    const ids = async () => (await repository.listNovels()).map((novel) => novel.id)
+    expect(await ids()).toEqual([5, 3, 2, 1])
+    await repository.updateNovel(1, makeNovelPayload({ updatedAt: '2026-11-22' }))
+    expect(await ids()).toEqual([5, 3, 2, 1])
+  })
+
   it('round-trips authors, ordered characters, deduplicated tags and optional cover paths', async () => {
     const repository = await createRepositoryForTest()
     const created = await repository.createNovel(

@@ -72,7 +72,7 @@ export class MobileNovelRepository {
               novels.cover_image_path, novels.favorite, novels.created_at, novels.updated_at
          FROM novels
          JOIN authors ON authors.id = novels.author_id
-        ORDER BY novels.id`,
+        ORDER BY novels.id DESC`,
     )
     const characters = await this.database.query<CharacterRow>(
       'SELECT novel_id, name, attribute FROM characters ORDER BY novel_id, sort_order, id',
