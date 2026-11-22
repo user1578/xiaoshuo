@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import type { ChangeEvent, CSSProperties, ReactNode, TouchEvent } from 'react'
+import type { ChangeEvent, CSSProperties, ReactNode, RefObject, TouchEvent } from 'react'
 import type { LucideIcon } from 'lucide-react'
 import {
   Archive,
@@ -29,6 +29,7 @@ import { CoverArt } from './components/CoverArt'
 import { NovelCover } from './components/NovelCover'
 import { MobileAuthors } from './components/mobile/MobileAuthors'
 import { MobileBottomNav } from './components/mobile/MobileBottomNav'
+import { MobileCoverCropDialog } from './components/mobile/MobileCoverCropDialog'
 import { MobileHome } from './components/mobile/MobileHome'
 import { MobileLibrary } from './components/mobile/MobileLibrary'
 import { MobileMoreDrawer } from './components/mobile/MobileMoreDrawer'
@@ -37,6 +38,7 @@ import { MobileProfile } from './components/mobile/MobileProfile'
 import { MobileCsvImport } from './components/mobile/MobileCsvImport'
 import { createTemporaryCoverPreview } from './components/mobile/localCoverPreview'
 import {
+  canEditSelection,
   finishSelection,
   reconcileAvailableIds,
   replaceSelectionContext,
@@ -66,6 +68,8 @@ import {
   updateNovel,
 } from './api/novels'
 import { resolveDataSource } from './data/dataSource'
+import { COVER_IMAGE_ACCEPT, coverFileExtension } from './data/mobile/coverInput'
+import { sortNovelsByRecordOrder } from './data/mobile/novelRecordOrder'
 import {
   getSupabaseSession,
   isSupabaseDataSource,
@@ -887,6 +891,7 @@ function App() {
   const [detailReturnTo, setDetailReturnTo] = useState<DetailReturnView>('home')
   const [editReturnTo, setEditReturnTo] = useState<View>('all')
   const [mobileFormSource, setMobileFormSource] = useState<MobileFormSource | null>(null)
+  const mobileCropDialogRef = useRef<HTMLDialogElement>(null)
   const [mobileSelection, setMobileSelection] = useState<NovelSelectionState>({
     contextKey: '',
     selecting: false,
@@ -1055,10 +1060,12 @@ function App() {
 
   const allTags = Array.from(new Set(novels.flatMap((novel) => novel.tags)))
 
+  const recordOrderedNovels = useMemo(() => sortNovelsByRecordOrder(novels), [novels])
+
   const filteredNovels = useMemo(() => {
     const keyword = query.trim().toLowerCase()
 
-    return novels.filter((novel) => {
+    return (mobileMode ? recordOrderedNovels : novels).filter((novel) => {
       const searchableText = [
         novel.title,
         novel.author,
@@ -1085,7 +1092,7 @@ function App() {
 
       return matchesKeyword && matchesStatus && matchesRating && matchesAttribute && matchesCp && matchesEnding && matchesTag
     })
-  }, [filters, novels, query])
+  }, [filters, novels, query, recordOrderedNovels])
 
   const visibleNovels = useMemo(() => {
     const viewFilters: Partial<Record<View, (novel: Novel) => boolean>> = {
@@ -1118,8 +1125,8 @@ function App() {
   )
 
   const recentNovels = useMemo(
-    () => [...novels].sort((firstNovel, secondNovel) => secondNovel.createdAt.localeCompare(firstNovel.createdAt)).slice(0, 5),
-    [novels],
+    () => recordOrderedNovels.slice(0, 5),
+    [recordOrderedNovels],
   )
 
   const authors = Array.from(new Set(novels.map((novel) => novel.author))).map((author) => {
@@ -1138,20 +1145,24 @@ function App() {
   const currentMobileAuthor = selectedAuthor
     ? { author: selectedAuthor.author, works: novels.filter((novel) => novel.author === selectedAuthor.author) }
     : null
-  const mobileSelectionContext = activeView === 'authors' && currentMobileAuthor
-    ? `author:${currentMobileAuthor.author}`
-    : isLibraryView(activeView)
-      ? mobileLibraryContextKey(activeView, query, filters)
-      : `view:${activeView}`
-  const mobileSelectionNovels = activeView === 'authors' && currentMobileAuthor
-    ? currentMobileAuthor.works
-    : isLibraryView(activeView)
-      ? visibleNovels
-      : []
-  const mobileAvailableIdSignature = mobileSelectionNovels.map((novel) => novel.id).join(',')
+  const mobileSelectionContext = activeView === 'home'
+    ? 'home:recent'
+    : activeView === 'authors' && currentMobileAuthor
+      ? `author:${currentMobileAuthor.author}`
+      : isLibraryView(activeView)
+        ? mobileLibraryContextKey(activeView, query, filters)
+        : `view:${activeView}`
+  const mobileSelectionNovels = activeView === 'home'
+    ? recentNovels
+    : activeView === 'authors' && currentMobileAuthor
+      ? currentMobileAuthor.works
+      : isLibraryView(activeView)
+        ? visibleNovels
+        : []
+  const mobileAvailableIds = mobileSelectionNovels.map((novel) => novel.id)
 
   const visibleMobileSelection = mobileSelection.contextKey === mobileSelectionContext
-    ? reconcileAvailableIds(mobileSelection, mobileAvailableIdSignature ? mobileAvailableIdSignature.split(',').map(Number) : [])
+    ? reconcileAvailableIds(mobileSelection, mobileAvailableIds)
     : finishSelection(mobileSelection)
 
   const openEdit = (novel: Novel) => {
@@ -1170,18 +1181,18 @@ function App() {
   }
 
   const startMobileSelectionWith = (id: number) => {
-    setMobileSelection(startSelectionWith(mobileSelectionContext, id, mobileSelectionNovels.map((novel) => novel.id)))
+    setMobileSelection(startSelectionWith(mobileSelectionContext, id, mobileAvailableIds))
   }
 
   const toggleMobileSelection = (id: number) => {
     setMobileSelection((selection) => selection.contextKey === mobileSelectionContext
-      ? toggleSelectionId(selection, id, mobileSelectionNovels.map((novel) => novel.id))
+      ? toggleSelectionId(selection, id, mobileAvailableIds)
       : replaceSelectionContext(selection, mobileSelectionContext))
   }
 
   const toggleAllMobileSelection = () => {
     setMobileSelection((selection) => selection.contextKey === mobileSelectionContext
-      ? toggleAllSelection(selection, mobileSelectionNovels.map((novel) => novel.id))
+      ? toggleAllSelection(selection, mobileAvailableIds)
       : replaceSelectionContext(selection, mobileSelectionContext))
   }
 
@@ -1200,6 +1211,7 @@ function App() {
   }
 
   const openMobileSelectionEdit = () => {
+    if (!canEditSelection(visibleMobileSelection)) return
     const selectedId = [...visibleMobileSelection.selectedIds][0]
     const novel = mobileSelectionNovels.find((candidate) => candidate.id === selectedId)
     if (!novel) return
@@ -1218,6 +1230,7 @@ function App() {
   }
 
   const openMobileNew = (returnView: View) => {
+    finishMobileSelection()
     setMobileFormSource({ kind: 'new', returnView })
     setActiveView('new')
   }
@@ -1300,6 +1313,7 @@ function App() {
   }
 
   const openMobileDetail = (novel: Novel, source: View) => {
+    finishMobileSelection()
     setSelectedNovel(novel)
     setDetailReturnTo(detailReturnView(source))
     setActiveView('detail')
@@ -1324,6 +1338,10 @@ function App() {
   }
 
   const handleAndroidBack = () => {
+    if (mobileCropDialogRef.current?.open) {
+      mobileCropDialogRef.current.close()
+      return
+    }
     const action = resolveMobileBack({
       activeView,
       moreOpen,
@@ -1453,15 +1471,22 @@ function App() {
         <>
           <MobileTopBar onMore={() => setMoreOpen(true)} subtitle="把喜欢的故事装进口袋" title="小说袋" />
           <MobileHome
-            onImport={() => setActiveView('backup')}
+            onDeleteSelection={deleteMobileSelection}
+            onEditSelection={openMobileSelectionEdit}
+            onFinishSelection={finishMobileSelection}
+            onImport={() => changeActiveView('backup')}
             onNew={() => openMobileNew('all')}
-            onOpenLibrary={() => setActiveView('all')}
+            onOpenLibrary={() => changeActiveView('all')}
             onOpenNovel={(novel) => openMobileDetail(novel, 'home')}
             onQueryChange={updateMobileQuery}
             onRefreshRandom={refreshHomeRandomNovel}
+            onStartSelectionWith={startMobileSelectionWith}
+            onToggleAll={toggleAllMobileSelection}
+            onToggleSelection={toggleMobileSelection}
             query={query}
             randomNovel={homeRandomNovel}
             recentNovels={recentNovels}
+            selection={visibleMobileSelection}
             stats={stats}
           />
         </>
@@ -1541,11 +1566,11 @@ function App() {
     }
 
     if (activeView === 'new') {
-      return <><MobileTopBar onBack={() => returnFromMobileForm()} title="新增小说" /><div className="mobile-page mobile-form-page"><NovelFormView allTags={allTags} fallbackNovel={createBlankNovel()} mode="new" novels={novels} onCancel={() => returnFromMobileForm()} onCreateNovel={handleCreateNovel} setActiveView={setActiveView} /></div></>
+      return <><MobileTopBar onBack={() => returnFromMobileForm()} title="新增小说" /><div className="mobile-page mobile-form-page"><NovelFormView allTags={allTags} cropDialogRef={mobileCropDialogRef} fallbackNovel={createBlankNovel()} mode="new" novels={novels} onCancel={() => returnFromMobileForm()} onCreateNovel={handleCreateNovel} setActiveView={setActiveView} /></div></>
     }
 
     if (activeView === 'edit') {
-      return <><MobileTopBar onBack={() => returnFromMobileForm()} title="编辑小说" /><div className="mobile-page mobile-form-page"><NovelFormView allTags={allTags} fallbackNovel={createBlankNovel()} mode="edit" novel={editingNovel ?? createBlankNovel()} novels={novels} onCancel={() => returnFromMobileForm()} onUpdateNovel={handleUpdateNovel} setActiveView={setActiveView} /></div></>
+      return <><MobileTopBar onBack={() => returnFromMobileForm()} title="编辑小说" /><div className="mobile-page mobile-form-page"><NovelFormView allTags={allTags} cropDialogRef={mobileCropDialogRef} fallbackNovel={createBlankNovel()} mode="edit" novel={editingNovel ?? createBlankNovel()} novels={novels} onCancel={() => returnFromMobileForm()} onUpdateNovel={handleUpdateNovel} setActiveView={setActiveView} /></div></>
     }
 
     return (
@@ -3368,6 +3393,7 @@ function BackupView({
 
 function NovelFormView({
   allTags,
+  cropDialogRef,
   fallbackNovel,
   mode,
   novel,
@@ -3378,6 +3404,7 @@ function NovelFormView({
   setActiveView,
 }: {
   allTags: string[]
+  cropDialogRef?: RefObject<HTMLDialogElement | null>
   fallbackNovel: Novel
   mode: 'new' | 'edit'
   novel?: Novel
@@ -3417,6 +3444,8 @@ function NovelFormView({
   const [submitError, setSubmitError] = useState<string | null>(null)
   const [pendingDuplicate, setPendingDuplicate] = useState<PendingDuplicate | null>(null)
   const [localCoverPreviewUrl, setLocalCoverPreviewUrl] = useState<string | null>(null)
+  const [coverCropSource, setCoverCropSource] = useState<{ url: string; type: string } | null>(null)
+  const [coverError, setCoverError] = useState<string | null>(null)
   const [coverChange, setCoverChange] = useState<CoverChange>({ kind: 'keep' })
   const coverInputRef = useRef<HTMLInputElement>(null)
 
@@ -3427,6 +3456,11 @@ function NovelFormView({
       }
     }
   }, [localCoverPreviewUrl])
+
+  useEffect(() => {
+    if (!coverCropSource) return
+    return () => URL.revokeObjectURL(coverCropSource.url)
+  }, [coverCropSource])
 
   const previewNovel: Novel = {
     ...baseNovel,
@@ -3473,18 +3507,28 @@ function NovelFormView({
   }
 
   const handleLocalCoverSelect = (event: ChangeEvent<HTMLInputElement>) => {
-    const selectedFile = event.target.files?.[0]
+    const selectedFile = event.currentTarget.files?.[0]
+    event.currentTarget.value = ''
     if (!selectedFile) return
-    setLocalCoverPreviewUrl(createTemporaryCoverPreview(selectedFile))
-    setCoverChange({ kind: 'replace', file: selectedFile })
+    setCoverError(null)
+    try {
+      coverFileExtension(selectedFile)
+      setCoverCropSource({ url: createTemporaryCoverPreview(selectedFile), type: selectedFile.type })
+    } catch (error) {
+      setCoverError(error instanceof Error ? error.message : '无法打开图片')
+    }
+  }
+
+  const confirmCoverCrop = (file: File) => {
+    setLocalCoverPreviewUrl(createTemporaryCoverPreview(file))
+    setCoverChange({ kind: 'replace', file })
+    setCoverCropSource(null)
   }
 
   const clearLocalCoverPreview = () => {
+    setCoverError(null)
     setLocalCoverPreviewUrl(null)
     setCoverChange({ kind: 'remove' })
-    if (coverInputRef.current) {
-      coverInputRef.current.value = ''
-    }
   }
 
   const buildPayload = (): NovelPayload => {
@@ -3633,14 +3677,23 @@ function NovelFormView({
           <div>
             <span>当前封面</span>
             <h3 id="local-cover-title">本地图片封面</h3>
-            <p>选择后仅作即时预览；移动端保存时会写入 App 私有封面目录，Web 不会上传图片。</p>
-            <input accept="image/*" className="local-cover-input" onChange={handleLocalCoverSelect} ref={coverInputRef} type="file" />
+            <p>选图后裁剪为 3:4 封面。支持 JPEG、PNG、WebP，最大 10 MB。</p>
+            <input accept={COVER_IMAGE_ACCEPT} className="local-cover-input" onChange={handleLocalCoverSelect} ref={coverInputRef} type="file" />
             <div className="local-cover-actions">
               <button className="outline-button" onClick={() => coverInputRef.current?.click()} type="button">从本地图片选择</button>
               <button onClick={clearLocalCoverPreview} type="button">使用默认封面</button>
             </div>
+            {coverError && <p className="mobile-action-error" role="alert">{coverError}</p>}
           </div>
         </section>
+        {coverCropSource && (
+          <MobileCoverCropDialog
+            dialogRef={cropDialogRef}
+            onCancel={() => setCoverCropSource(null)}
+            onConfirm={confirmCoverCrop}
+            source={coverCropSource}
+          />
+        )}
 
         {submitError && <p role="alert">{submitError}</p>}
         {pendingDuplicate && (

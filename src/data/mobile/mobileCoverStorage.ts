@@ -1,6 +1,7 @@
 import { Capacitor } from '@capacitor/core'
 import { Directory, Filesystem } from '@capacitor/filesystem'
 import type { CoverInputFile } from '../../types/novel'
+import { coverFileExtension } from './coverInput'
 
 export type MobileFilesystemAdapter = {
   writeFile(options: { path: string; data: string; directory: Directory; recursive: boolean }): Promise<unknown>
@@ -8,12 +9,6 @@ export type MobileFilesystemAdapter = {
   deleteFile(options: { path: string; directory: Directory }): Promise<unknown>
 }
 
-const MAX_COVER_BYTES = 10 * 1024 * 1024
-const MIME_TO_EXTENSION: Record<string, 'jpg' | 'png' | 'webp'> = {
-  'image/jpeg': 'jpg',
-  'image/png': 'png',
-  'image/webp': 'webp',
-}
 const COVER_PATH_PATTERN = /^covers\/[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\.(jpg|png|webp)$/i
 
 function errorMessage(error: unknown): string {
@@ -61,14 +56,7 @@ export class MobileCoverStorage {
   }
 
   async save(file: CoverInputFile): Promise<string> {
-    if (file.size > MAX_COVER_BYTES) {
-      throw new Error('自定义封面不能超过 10 MB')
-    }
-    const extension = MIME_TO_EXTENSION[file.type]
-    if (!extension) {
-      throw new Error('自定义封面只支持 JPEG、PNG 或 WebP 图片')
-    }
-
+    const extension = coverFileExtension(file)
     const path = assertCoverImagePath(`covers/${this.createUuid()}.${extension}`)
     const data = arrayBufferToBase64(await file.arrayBuffer())
     await this.filesystem.writeFile({

@@ -1,20 +1,52 @@
-import { ChevronRight, Plus, Search, Shuffle } from 'lucide-react'
+import { Check, ChevronRight, Plus, Search, Shuffle } from 'lucide-react'
 import { NovelCover } from '../NovelCover'
 import type { Novel } from '../../types/novel'
+import { useLongPress } from './longPress'
+import { MobileSelectionActions, type MobileSelectionActionsProps } from './MobileSelectionActions'
 
 type Stats = { total: number; finished: number; liked: number; abandoned: number }
+
+function RecentNovelCard({ novel, selecting, selected, onClick, onLongPress }: {
+  novel: Novel
+  selecting: boolean
+  selected: boolean
+  onClick: () => void
+  onLongPress: () => void
+}) {
+  const longPress = useLongPress(onLongPress)
+  return (
+    <button
+      {...longPress}
+      aria-pressed={selecting ? selected : undefined}
+      className="mobile-recent-item"
+      onClick={onClick}
+      onContextMenu={(event) => event.preventDefault()}
+      type="button"
+    >
+      <NovelCover novel={novel} size="thumb" />
+      <span><strong>{novel.title}</strong><em>{novel.author}</em></span>
+      {selecting ? (
+        <i aria-hidden="true" className="mobile-recent-check">{selected && <Check size={15} />}</i>
+      ) : <ChevronRight size={17} />}
+    </button>
+  )
+}
 
 export function MobileHome({
   stats,
   query,
   randomNovel,
   recentNovels,
+  selection,
   onQueryChange,
   onRefreshRandom,
   onOpenNovel,
   onOpenLibrary,
   onImport,
   onNew,
+  onStartSelectionWith,
+  onToggleSelection,
+  ...selectionActions
 }: {
   stats: Stats
   query: string
@@ -26,7 +58,9 @@ export function MobileHome({
   onOpenLibrary: () => void
   onImport: () => void
   onNew: () => void
-}) {
+  onStartSelectionWith: (id: number) => void
+  onToggleSelection: (id: number) => void
+} & MobileSelectionActionsProps) {
   const statItems = [
     { label: '总数', value: stats.total },
     { label: '看完', value: stats.finished },
@@ -88,13 +122,21 @@ export function MobileHome({
           </div>
           <button className="mobile-text-button" onClick={onOpenLibrary} type="button">查看全部</button>
         </div>
+        {selection.selecting && (
+          <div aria-label="最近添加选择操作" className="mobile-library-actions mobile-recent-actions" role="group">
+            <MobileSelectionActions {...selectionActions} novels={recentNovels} selection={selection} />
+          </div>
+        )}
         <div className="mobile-recent-list">
           {recentNovels.map((novel) => (
-            <button className="mobile-recent-item" key={novel.id} onClick={() => onOpenNovel(novel)} type="button">
-              <NovelCover novel={novel} size="thumb" />
-              <span><strong>{novel.title}</strong><em>{novel.author}</em></span>
-              <ChevronRight size={17} />
-            </button>
+            <RecentNovelCard
+              key={novel.id}
+              novel={novel}
+              onClick={() => selection.selecting ? onToggleSelection(novel.id) : onOpenNovel(novel)}
+              onLongPress={() => onStartSelectionWith(novel.id)}
+              selected={selection.selectedIds.has(novel.id)}
+              selecting={selection.selecting}
+            />
           ))}
           {recentNovels.length === 0 && <div className="mobile-inline-empty">暂时没有可显示的最近添加记录。</div>}
         </div>

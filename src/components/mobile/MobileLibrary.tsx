@@ -1,7 +1,7 @@
-import { Check, ChevronRight, Edit3, Filter, MoreHorizontal, Plus, Search, Trash2, X } from 'lucide-react'
+import { Check, ChevronRight, Filter, MoreHorizontal, Plus, Search } from 'lucide-react'
 import { NovelCover } from '../NovelCover'
 import { useLongPress } from './longPress'
-import { canEditSelection, type NovelSelectionState } from './novelSelection'
+import { MobileSelectionActions, type MobileSelectionActionsProps } from './MobileSelectionActions'
 import { mobileLibraryChips } from './mobileNavigation'
 import type { Novel, View } from '../../types/novel'
 
@@ -62,7 +62,6 @@ export function MobileLibrary({
   activeView: View
   novels: Novel[]
   query: string
-  selection: NovelSelectionState
   onQueryChange: (value: string) => void
   onNavigate: (view: View) => void
   onOpenNovel: (novel: Novel) => void
@@ -72,11 +71,7 @@ export function MobileLibrary({
   onStartSelection: () => void
   onStartSelectionWith: (id: number) => void
   onToggleSelection: (id: number) => void
-  onToggleAll: () => void
-  onFinishSelection: () => void
-  onEditSelection: () => void
-  onDeleteSelection: () => Promise<void>
-}) {
+} & MobileSelectionActionsProps) {
   const libraryTitle = activeView === 'all'
     ? '我的书库'
     : activeView === 'recent'
@@ -88,14 +83,6 @@ export function MobileLibrary({
           : activeView === 'abandoned'
             ? '弃文'
             : '全部小说'
-  const selectedCount = selection.selectedIds.size
-  const allSelected = novels.length > 0 && novels.every((novel) => selection.selectedIds.has(novel.id))
-
-  const deleteSelected = async () => {
-    if (selectedCount === 0 || !window.confirm(`确定删除已选择的 ${selectedCount} 本小说吗？`)) return
-    await onDeleteSelection()
-  }
-
   return (
     <div className="mobile-page mobile-library-page">
       <div className="mobile-library-title-row">
@@ -112,13 +99,14 @@ export function MobileLibrary({
       </div>
       <div className="mobile-library-actions">
         {selection.selecting ? (
-          <>
-            <span>已选择 {selectedCount} 本</span>
-            <button className="mobile-text-button" onClick={onToggleAll} type="button">{allSelected ? '取消全选' : '全选'}</button>
-            {canEditSelection(selection) && <button className="mobile-text-button" onClick={onEditSelection} type="button"><Edit3 size={15} />编辑</button>}
-            <button className="mobile-text-button danger" disabled={selectedCount === 0} onClick={() => void deleteSelected()} type="button"><Trash2 size={15} />删除</button>
-            <button aria-label="完成选择" className="mobile-icon-button" onClick={onFinishSelection} type="button"><X size={18} /></button>
-          </>
+          <MobileSelectionActions
+            novels={novels}
+            onDeleteSelection={onDeleteSelection}
+            onEditSelection={onEditSelection}
+            onFinishSelection={onFinishSelection}
+            onToggleAll={onToggleAll}
+            selection={selection}
+          />
         ) : <button className="mobile-text-button" onClick={onStartSelection} type="button">选择</button>}
       </div>
       <div className="mobile-novel-list">

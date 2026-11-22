@@ -1,0 +1,78 @@
+.mobile-cover-crop {
+  width: min(480px, calc(100% - 24px));
+  max-height: calc(100% - 24px);
+  padding: 16px;
+  border: 0;
+  border-radius: 16px;
+  color: var(--text-strong);
+  background: var(--surface);
+}
+
+.mobile-cover-crop::backdrop {
+  background: rgb(0 0 0 / 58%);
+}
+
+.mobile-cover-crop h2 {
+  margin: 0;
+  font-size: 19px;
+}
+
+.mobile-cover-crop p {
+  margin: 4px 0 12px;
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
+.mobile-cover-crop p.mobile-cover-crop-error {
+  color: var(--danger);
+}
+
+.mobile-cover-crop-stage {
+  position: relative;
+  height: clamp(180px, 52vh, 440px);
+  overflow: hidden;
+  border-radius: 12px;
+  background: #242024;
+}
+
+.mobile-cover-crop-zoom {
+  display: flex;
+  min-height: 44px;
+  align-items: center;
+  gap: 12px;
+  margin: 4px 0;
+  font-size: 14px;
+}
+
+.mobile-cover-crop-zoom input {
+  min-width: 0;
+  flex: 1;
+  accent-color: var(--accent);
+}
+
+.mobile-cover-crop-actions {
+  display: flex;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.mobile-cover-crop-actions button {
+  min-height: 44px;
+  padding: 0 12px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  color: var(--text-strong);
+  background: var(--surface);
+}
+
+.mobile-cover-crop-actions button:last-child {
+  border-color: var(--accent);
+  color: var(--surface);
+  background: var(--accent);
+}
+
+.mobile-cover-crop-actions button:disabled {
+  cursor: default;
+  opacity: 0.55;
+}

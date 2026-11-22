@@ -6,8 +6,8 @@
   flex: 0 0 auto;
   width: 42px;
   min-width: 42px;
-  height: 54px;
-  min-height: 54px;
+  height: 56px;
+  min-height: 56px;
   border-radius: 10px;
 }
 
@@ -353,6 +353,49 @@
     color: var(--text-muted);
   }
 
+  .mobile-recent-item {
+    -webkit-touch-callout: none;
+    user-select: none;
+  }
+
+  .mobile-recent-item[aria-pressed="true"] {
+    border-color: var(--accent);
+    background: color-mix(in srgb, var(--accent-soft) 28%, var(--surface));
+  }
+
+  .mobile-recent-check {
+    display: grid;
+    width: 22px;
+    height: 22px;
+    flex: 0 0 auto;
+    place-items: center;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+  }
+
+  .mobile-recent-item[aria-pressed="true"] .mobile-recent-check {
+    border-color: var(--accent);
+  }
+
+  .mobile-recent-item .mobile-recent-check svg {
+    color: var(--accent);
+  }
+
+  .mobile-recent-actions {
+    flex-wrap: wrap;
+    gap: 2px 4px;
+  }
+
+  .mobile-recent-actions button {
+    min-height: 44px;
+    white-space: nowrap;
+  }
+
+  .mobile-library-actions .mobile-action-error {
+    flex-basis: 100%;
+    margin: 0;
+  }
+
   .mobile-home-add,
   .mobile-fab {
     position: fixed;
@@ -465,8 +508,8 @@
   }
 
   .mobile-novel-card-main .cover-wall {
-    width: 58px;
-    min-width: 58px;
+    width: 60px;
+    min-width: 60px;
     height: 80px;
     min-height: 80px;
     border-radius: 11px;
@@ -918,7 +961,7 @@
 
   .mobile-form-page .local-cover-picker {
     display: grid;
-    grid-template-columns: 82px minmax(0, 1fr);
+    grid-template-columns: 84px minmax(0, 1fr);
     gap: 12px;
     margin: 0 0 14px;
     padding: 12px;
@@ -930,7 +973,7 @@
   .mobile-form-page .local-cover-preview,
   .mobile-form-page .local-cover-preview .cover-wall,
   .mobile-form-page .local-cover-preview img {
-    width: 82px;
+    width: 84px;
     height: 112px;
     min-height: 112px;
     border-radius: 12px;
@@ -949,6 +992,10 @@
   .mobile-form-page .local-cover-picker p {
     color: var(--text-muted);
     font-size: 12px;
+  }
+
+  .mobile-form-page .local-cover-picker p.mobile-action-error {
+    color: var(--danger);
   }
 
   .mobile-form-page .local-cover-picker h3 {
